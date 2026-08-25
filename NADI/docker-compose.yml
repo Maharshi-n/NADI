@@ -17,10 +17,12 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./apps/api/Dockerfile
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app
     environment:
       DATABASE_URL: postgresql+asyncpg://nadi:nadi@db:5432/nadi
       DATABASE_URL_SYNC: postgresql://nadi:nadi@db:5432/nadi

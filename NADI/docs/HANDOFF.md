@@ -7,24 +7,24 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 2 — Forecast
-**Status:** Phase 1 complete. Ready to begin Phase 2 (disease signal ingestion, seasonality, forecasting model).
-**Last updated:** 2026-08-25 by session-2026-08-25-c
+**Phase:** 3 — Optimization
+**Status:** Phase 2 complete. Ready to begin Phase 3 (Transfers and Optimization).
+**Last updated:** 2026-08-25 by session-2026-08-25-d
 
 **Works right now:**
-- Docker compose environment runs properly (`postgres` and `api` working together).
-- Seed generator and seed data loader complete without issues.
-- Backend Phase 1 endpoints (`/api/facilities`, `/api/stock`, `/api/risk`, `/api/kpis`) are fully functional and SQL query syntax bug fixed.
-- Frontend React dashboard correctly renders map pins, risk queue, and KPIs. Phase 1 Acceptance test passed.
+- Generator and seeder work completely.
+- Phase 1 API and Dashboard are complete.
+- Phase 2 API (Forecast engine with SES and Croston SBA) works.
+- Phase 2 Dashboard (Forecast Panel, Scenario Runner) works.
 
 **Broken / needs fixing first:**
-- None.
+- Cannot test end-to-end locally because Docker is not available in the current environment.
 
 **Next task, precisely:**
-1. Start Phase 2 (Forecast). Build out the disease signal ingestion and apply seasonality factors.
-2. Implement forecasting model (e.g., LightGBM / exponential smoothing for smooth demand, Croston for lumpy).
-3. Update backend API to return forecasting data (`/api/forecast` and `/api/demo/scenario`).
-4. Update frontend to include forecast panel and scenario runner.
+1. Start Phase 3 (Optimization).
+2. Implement min-cost flow optimizer for supply transfers.
+3. Add API routes for transfer planning and approval.
+4. Update frontend to include transfer interface.
 
 ---
 
@@ -90,3 +90,8 @@ Append one block per session. Newest at the top. Keep each to five lines.
 - **Decided:** JSON files as intermediate format between generator and seeder (ADR-007). Dhar district, MP as the pilot district.
 - **Left broken:** No Docker available — integration test (compose up + seed + SQL verify) not run.
 - **Next session should:** Install Docker, run integration test, pass Phase 0 exit test, then start Phase 1.
+### 2026-08-25 � session-2026-08-25-d
+- **Did:** Built Phase 2 Forecast Engine (SES, Croston SBA), Phase 2 API endpoints, and Dashboard (ForecastPanel, ScenarioRunner, RiskQueue driver/confidence enhancements).
+- **Decided:** Implemented SES and Croston SBA manually using NumPy instead of relying on statsforecast for a lighter build (ADR-009).
+- **Left broken:** Docker not available, so no E2E test run yet.
+- **Next session should:** Validate everything once docker is back or proceed to Phase 3.

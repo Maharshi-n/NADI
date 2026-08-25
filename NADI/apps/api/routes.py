@@ -1,17 +1,23 @@
 """
-Phase 1 API routes — The Spine.
+Phase 2 API routes — Forecast.
 
-All burn-rate and days-of-cover computations happen in SQL, not Python.
-This is a PHASES.md requirement for scale correctness.
+Adds:
+- GET /api/forecast — history + forecast band + driver + confidence
+- POST /api/demo/scenario — inject outbreak via inflated disease signals
+- POST /api/demo/reset — restore seed state
 
-Conventions:
-- camelCase responses via Pydantic alias
-- List endpoints: limit/offset → {items, total}
-- Status thresholds: CRITICAL < 15 days, WARNING < 30 days
+Updates:
+- GET /api/risk — now uses forecasts table for driver/confidence
+- GET /api/kpis — projected days now forecast-aware
+
+All burn-rate and days-of-cover computations in SQL (Phase 1).
+Forecast computations call ml/forecasting/engine.py.
 """
 
 import os
 import sys
+import math
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,7 +36,18 @@ from schemas import (
     RiskItem,
     RiskListResponse,
     KpiResponse,
+    ForecastResponse,
+    ForecastHistoryItem,
+    ForecastBandItem,
+    ScenarioRequest,
+    ScenarioResponse,
 )
+
+# Add ml directory to path for forecasting imports
+ML_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml"))
+sys.path.insert(0, ML_DIR)
+from forecasting.engine import forecast_facility_drug
+from forecasting.classify import classify_demand
 
 router = APIRouter(prefix="/api")
 
@@ -390,7 +407,7 @@ async def list_stock(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/risk
+# GET /api/risk — Phase 2: forecast-aware with driver + confidence
 # ---------------------------------------------------------------------------
 
 @router.get("/risk", response_model=RiskListResponse)
@@ -401,10 +418,11 @@ async def list_risk(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Risk queue — ranked ascending by days of cover.
-    Phase 1: days_to_stockout = days_of_cover (no forecasting yet).
-    Bottleneck is always 'medicine' at this stage.
+    Risk queue — ranked ascending by days to stockout.
+    Phase 2: uses forecasts table for driver/confidence when available,
+    falls back to burn-rate days-of-cover when forecasts are absent.
     """
+    # Try forecast-aware query first
     query = text("""
         WITH burn AS (
             SELECT
@@ -437,19 +455,40 @@ async def list_risk(
             FROM current_stock cs
             LEFT JOIN burn b ON cs.facility_id = b.facility_id
                             AND cs.drug_id = b.drug_id
+        ),
+        ranked_forecasts AS (
+            SELECT
+                fc.facility_id,
+                fc.drug_id,
+                fc.days_to_stockout,
+                fc.confidence,
+                fc.driver_label,
+                ROW_NUMBER() OVER (
+                    PARTITION BY fc.facility_id, fc.drug_id
+                    ORDER BY fc.computed_at DESC
+                ) AS rn
+            FROM forecasts fc
+        ),
+        latest_forecasts AS (
+            SELECT * FROM ranked_forecasts WHERE rn = 1
         )
         SELECT
             f.id AS facility_id,
             f.name AS facility_name,
             d.id AS drug_id,
             d.name AS drug_name,
-            c.days_of_cover AS days_to_stockout
+            COALESCE(lf.days_to_stockout, c.days_of_cover) AS days_to_stockout,
+            lf.confidence,
+            lf.driver_label AS driver,
+            'medicine' AS bottleneck
         FROM cover c
         JOIN facilities f ON f.id = c.facility_id
         JOIN drugs d ON d.id = c.drug_id
-        WHERE c.days_of_cover IS NOT NULL
+        LEFT JOIN latest_forecasts lf ON lf.facility_id = c.facility_id
+                                      AND lf.drug_id = c.drug_id
+        WHERE COALESCE(lf.days_to_stockout, c.days_of_cover) IS NOT NULL
           AND (CAST(:district AS text) IS NULL OR f.district = :district)
-        ORDER BY c.days_of_cover ASC
+        ORDER BY COALESCE(lf.days_to_stockout, c.days_of_cover) ASC
         LIMIT :lim OFFSET :off
     """)
 
@@ -510,9 +549,9 @@ async def list_risk(
             drug_id=r["drug_id"],
             drug_name=r["drug_name"],
             days_to_stockout=round(dts, 1) if dts is not None else None,
-            confidence=None,  # Phase 1: no forecasting
-            driver=None,      # Phase 1: no forecasting
-            bottleneck="medicine",  # Phase 1: always medicine
+            confidence=round(r["confidence"], 2) if r["confidence"] is not None else None,
+            driver=r["driver"],
+            bottleneck=r["bottleneck"],
             status=days_of_cover_status(dts),
         ))
 
@@ -613,4 +652,409 @@ async def get_kpis(
         projected_stockout_days=row["projected_stockout_days"] or 0,
         expiry_at_risk_paise=row["expiry_at_risk_paise"] or 0,
         fill_rate=round(row["fill_rate"] or 0, 4),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/forecast — Phase 2
+# ---------------------------------------------------------------------------
+
+@router.get("/forecast", response_model=ForecastResponse)
+async def get_forecast(
+    facility_id: int = Query(..., alias="facilityId"),
+    drug_id: int = Query(..., alias="drugId"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Forecast for a single facility-drug pair.
+    Returns history, forecast band, reorder point, stockout date,
+    confidence, driver, and method used.
+    """
+    # 1. Get daily dispensing history (up to 180 days)
+    history_query = text("""
+        SELECT
+            DATE(t.occurred_at) AS day,
+            COALESCE(SUM(t.quantity), 0) AS qty
+        FROM transactions t
+        WHERE t.facility_id = :fid
+          AND t.drug_id = :did
+          AND t.type = 'dispense'
+        GROUP BY DATE(t.occurred_at)
+        ORDER BY day ASC
+    """)
+    result = await db.execute(history_query, {"fid": facility_id, "did": drug_id})
+    history_rows = result.mappings().all()
+
+    if not history_rows:
+        return ForecastResponse(
+            history=[], forecast=[], reorder_point=0,
+            stockout_date=None, days_to_stockout=None,
+            confidence=0.0, driver="No history", method_used="none",
+        )
+
+    # Fill gaps with zeros for a continuous daily series
+    daily_data = {}
+    for r in history_rows:
+        daily_data[r["day"]] = float(r["qty"])
+
+    min_date = min(daily_data.keys())
+    max_date = max(daily_data.keys())
+    all_days = []
+    current = min_date
+    while current <= max_date:
+        all_days.append((current.isoformat(), daily_data.get(current, 0.0)))
+        current += timedelta(days=1)
+
+    # 2. Get current stock
+    stock_query = text("""
+        SELECT COALESCE(SUM(s.quantity), 0) AS total_qty
+        FROM stock s
+        WHERE s.facility_id = :fid AND s.drug_id = :did
+    """)
+    stock_result = await db.execute(stock_query, {"fid": facility_id, "did": drug_id})
+    current_stock = float(stock_result.scalar() or 0)
+
+    # 3. Get drug category for season factor lookup
+    drug_query = text("SELECT category FROM drugs WHERE id = :did")
+    drug_result = await db.execute(drug_query, {"did": drug_id})
+    drug_row = drug_result.mappings().first()
+    drug_category = drug_row["category"] if drug_row else "unknown"
+
+    # 4. Get facility district for outbreak factor
+    fac_query = text("SELECT district FROM facilities WHERE id = :fid")
+    fac_result = await db.execute(fac_query, {"fid": facility_id})
+    fac_row = fac_result.mappings().first()
+    district = fac_row["district"] if fac_row else "Dhar"
+
+    # 5. Get season factor for current month
+    current_month = date.today().month
+    sf_query = text("""
+        SELECT factor FROM season_factor
+        WHERE drug_category = :cat AND month = :m
+    """)
+    sf_result = await db.execute(sf_query, {"cat": drug_category, "m": current_month})
+    sf_row = sf_result.scalar()
+    season_factor = float(sf_row) if sf_row else 1.0
+
+    # 6. Compute outbreak factor from recent disease signals
+    outbreak_factor, outbreak_condition, outbreak_pct = await _compute_outbreak_factor(
+        db, district, drug_category
+    )
+
+    # 7. Classify demand
+    quantities = [q for _, q in all_days]
+    demand_class = classify_demand(quantities)
+
+    # 8. Run the forecasting engine
+    forecast_result = forecast_facility_drug(
+        daily_dispensing=all_days,
+        current_stock=current_stock,
+        season_factor=season_factor,
+        outbreak_factor=outbreak_factor,
+        outbreak_condition=outbreak_condition,
+        outbreak_pct_change=outbreak_pct,
+        demand_class=demand_class,
+    )
+
+    return ForecastResponse(
+        history=[ForecastHistoryItem(date=h["date"], quantity=h["quantity"])
+                 for h in forecast_result["history"]],
+        forecast=[ForecastBandItem(**b) for b in forecast_result["forecast_band"]],
+        reorder_point=forecast_result["reorder_point"],
+        stockout_date=forecast_result["stockout_date"],
+        days_to_stockout=forecast_result["days_to_stockout"],
+        confidence=forecast_result["confidence"],
+        driver=forecast_result["driver_label"],
+        method_used=forecast_result["method_used"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Outbreak factor helper
+# ---------------------------------------------------------------------------
+
+# Map from disease condition to drug categories that are affected
+CONDITION_DRUG_MAP = {
+    "dengue": ["antimalarial", "analgesic", "antibiotic"],
+    "malaria": ["antimalarial", "analgesic"],
+    "diarrhoeal": ["ors_zinc", "antibiotic", "gastrointestinal"],
+    "respiratory_infection": ["respiratory", "antibiotic", "antihistamine"],
+    "tuberculosis": ["antibiotic"],
+}
+
+
+async def _compute_outbreak_factor(
+    db: AsyncSession,
+    district: str,
+    drug_category: str,
+) -> tuple:
+    """
+    Compare the latest 2 weeks of disease signals vs the prior 4-week
+    baseline. If there's a spike in a condition that affects this drug
+    category, return (factor, condition_name, pct_change).
+    """
+    signal_query = text("""
+        WITH recent AS (
+            SELECT condition, SUM(case_count) AS cases
+            FROM disease_signal
+            WHERE district = :dist
+              AND week_start >= CURRENT_DATE - INTERVAL '14 days'
+            GROUP BY condition
+        ),
+        baseline AS (
+            SELECT condition, SUM(case_count) / 4.0 AS avg_cases
+            FROM disease_signal
+            WHERE district = :dist
+              AND week_start >= CURRENT_DATE - INTERVAL '42 days'
+              AND week_start < CURRENT_DATE - INTERVAL '14 days'
+            GROUP BY condition
+        )
+        SELECT
+            r.condition,
+            r.cases AS recent_cases,
+            COALESCE(b.avg_cases, 1) AS baseline_cases
+        FROM recent r
+        LEFT JOIN baseline b ON r.condition = b.condition
+        ORDER BY (r.cases / GREATEST(b.avg_cases, 1)) DESC
+    """)
+
+    result = await db.execute(signal_query, {"dist": district})
+    rows = result.mappings().all()
+
+    max_factor = 1.0
+    max_condition = None
+    max_pct = 0.0
+
+    for r in rows:
+        condition = r["condition"]
+        affected_cats = CONDITION_DRUG_MAP.get(condition, [])
+        if drug_category not in affected_cats:
+            continue
+
+        recent = float(r["recent_cases"])
+        baseline = float(r["baseline_cases"])
+        if baseline > 0:
+            ratio = recent / baseline
+            pct_change = (recent - baseline) / baseline
+        else:
+            ratio = 1.0
+            pct_change = 0.0
+
+        # Only count as outbreak if > 50% increase
+        if ratio > 1.5 and ratio > max_factor:
+            max_factor = min(ratio, 5.0)  # Cap at 5x to avoid absurd forecasts
+            max_condition = condition
+            max_pct = pct_change
+
+    return max_factor, max_condition, max_pct
+
+
+# ---------------------------------------------------------------------------
+# Forecast computation — batch (for startup and post-scenario)
+# ---------------------------------------------------------------------------
+
+async def compute_all_forecasts(db: AsyncSession):
+    """
+    Compute forecasts for all facility-drug pairs and write to the
+    forecasts table. Called on startup and after scenario changes.
+    """
+    # Get all facility-drug pairs with stock
+    pairs_query = text("""
+        SELECT DISTINCT s.facility_id, s.drug_id
+        FROM stock s
+        JOIN facilities f ON f.id = s.facility_id
+        WHERE f.type != 'warehouse'
+    """)
+    result = await db.execute(pairs_query)
+    pairs = result.mappings().all()
+
+    # Clear existing forecasts
+    await db.execute(text("DELETE FROM forecasts"))
+
+    computed = 0
+    for pair in pairs:
+        fid = pair["facility_id"]
+        did = pair["drug_id"]
+
+        # History
+        hist_result = await db.execute(text("""
+            SELECT DATE(t.occurred_at) AS day, COALESCE(SUM(t.quantity), 0) AS qty
+            FROM transactions t
+            WHERE t.facility_id = :fid AND t.drug_id = :did AND t.type = 'dispense'
+            GROUP BY DATE(t.occurred_at) ORDER BY day ASC
+        """), {"fid": fid, "did": did})
+        hist_rows = hist_result.mappings().all()
+
+        if not hist_rows:
+            continue
+
+        # Fill gaps
+        daily_data = {r["day"]: float(r["qty"]) for r in hist_rows}
+        min_d = min(daily_data.keys())
+        max_d = max(daily_data.keys())
+        all_days = []
+        cur = min_d
+        while cur <= max_d:
+            all_days.append((cur.isoformat(), daily_data.get(cur, 0.0)))
+            cur += timedelta(days=1)
+
+        # Stock
+        stock_res = await db.execute(text(
+            "SELECT COALESCE(SUM(quantity), 0) FROM stock WHERE facility_id = :fid AND drug_id = :did"
+        ), {"fid": fid, "did": did})
+        current_stock = float(stock_res.scalar() or 0)
+
+        # Drug category
+        drug_res = await db.execute(text("SELECT category FROM drugs WHERE id = :did"), {"did": did})
+        drug_row = drug_res.mappings().first()
+        drug_category = drug_row["category"] if drug_row else "unknown"
+
+        # District
+        fac_res = await db.execute(text("SELECT district FROM facilities WHERE id = :fid"), {"fid": fid})
+        fac_row = fac_res.mappings().first()
+        district = fac_row["district"] if fac_row else "Dhar"
+
+        # Season factor
+        current_month = date.today().month
+        sf_res = await db.execute(text(
+            "SELECT factor FROM season_factor WHERE drug_category = :cat AND month = :m"
+        ), {"cat": drug_category, "m": current_month})
+        sf_val = sf_res.scalar()
+        season_factor = float(sf_val) if sf_val else 1.0
+
+        # Outbreak factor
+        outbreak_factor, outbreak_condition, outbreak_pct = await _compute_outbreak_factor(
+            db, district, drug_category
+        )
+
+        # Classify and forecast
+        quantities = [q for _, q in all_days]
+        demand_class = classify_demand(quantities)
+
+        fc = forecast_facility_drug(
+            daily_dispensing=all_days,
+            current_stock=current_stock,
+            season_factor=season_factor,
+            outbreak_factor=outbreak_factor,
+            outbreak_condition=outbreak_condition,
+            outbreak_pct_change=outbreak_pct,
+            demand_class=demand_class,
+        )
+
+        # Write to forecasts table
+        await db.execute(text("""
+            INSERT INTO forecasts (facility_id, drug_id, computed_at,
+                predicted_daily_rate, days_to_stockout, confidence,
+                driver_label, method_used)
+            VALUES (:fid, :did, NOW(), :rate, :dts, :conf, :driver, :method)
+        """), {
+            "fid": fid, "did": did,
+            "rate": fc["predicted_daily_rate"],
+            "dts": fc["days_to_stockout"],
+            "conf": fc["confidence"],
+            "driver": fc["driver_label"],
+            "method": fc["method_used"],
+        })
+        computed += 1
+
+    await db.commit()
+    return computed
+
+
+# ---------------------------------------------------------------------------
+# POST /api/demo/scenario — Phase 2
+# ---------------------------------------------------------------------------
+
+@router.post("/demo/scenario", response_model=ScenarioResponse)
+async def fire_scenario(
+    body: ScenarioRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Inject an outbreak: write inflated disease_signal case counts,
+    then recompute forecasts. Returns affected facility count.
+    """
+    condition = body.condition
+    multiplier = body.multiplier
+    district = body.district
+
+    # Inflate recent disease signals for this condition
+    await db.execute(text("""
+        UPDATE disease_signal
+        SET case_count = CAST(case_count * :mult AS int)
+        WHERE condition = :cond
+          AND district = :dist
+          AND week_start >= CURRENT_DATE - INTERVAL '14 days'
+    """), {"mult": multiplier, "cond": condition, "dist": district})
+
+    await db.commit()
+
+    # Recompute all forecasts
+    computed = await compute_all_forecasts(db)
+
+    # Count affected facilities (those whose forecast worsened)
+    affected_cats = CONDITION_DRUG_MAP.get(condition, [])
+    if affected_cats:
+        cat_list = ",".join(f"'{c}'" for c in affected_cats)
+        count_result = await db.execute(text(f"""
+            SELECT COUNT(DISTINCT s.facility_id)
+            FROM stock s
+            JOIN drugs d ON d.id = s.drug_id
+            JOIN facilities f ON f.id = s.facility_id
+            WHERE d.category IN ({cat_list})
+              AND f.district = :dist
+              AND f.type != 'warehouse'
+        """), {"dist": district})
+        affected = count_result.scalar() or 0
+    else:
+        affected = 0
+
+    return ScenarioResponse(
+        affected_facilities=affected,
+        message=f"{condition.replace('_', ' ').title()} outbreak ({multiplier}×) applied to {district}. {computed} forecasts recomputed.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/demo/reset — Phase 2
+# ---------------------------------------------------------------------------
+
+@router.post("/demo/reset", response_model=ScenarioResponse)
+async def reset_demo(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore seed state: regenerate disease_signal data from the
+    generator and recompute all forecasts.
+    """
+    # Re-seed disease signals from generated data
+    import json
+    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "generated"))
+    ds_path = os.path.join(data_dir, "disease_signal.json")
+
+    if os.path.exists(ds_path):
+        with open(ds_path) as f:
+            signals = json.load(f)
+
+        # Clear and re-insert
+        await db.execute(text("DELETE FROM disease_signal"))
+        for s in signals:
+            await db.execute(text("""
+                INSERT INTO disease_signal (district, condition, week_start, case_count, source)
+                VALUES (:district, :condition, :week_start, :case_count, :source)
+            """), {
+                "district": s["district"],
+                "condition": s["condition"],
+                "week_start": datetime.strptime(s["week_start"], "%Y-%m-%d").date(),
+                "case_count": s["case_count"],
+                "source": s.get("source", "IDSP"),
+            })
+        await db.commit()
+
+    # Recompute forecasts
+    computed = await compute_all_forecasts(db)
+
+    return ScenarioResponse(
+        affected_facilities=0,
+        message=f"Demo reset complete. Disease signals restored, {computed} forecasts recomputed.",
     )

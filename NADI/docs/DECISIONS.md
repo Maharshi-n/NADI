@@ -101,3 +101,10 @@ workflow: generate then seed.
 **Rejected:** Mapbox GL JS (requires token/account), Google Maps (requires billing/key).
 **Consequence:** No API keys required in .env for map functionality. Free and open.
 
+
+## ADR-009 — Custom NumPy Forecasting Engine
+**Date:** 2026-08-25 | **Session:** session-2026-08-25-d | **Status:** accepted
+**Context:** Phase 2 requires SES and Croston SBA forecasting methods. Using statsforecast/Nixtla requires heavy C dependencies, complicating the Docker image and build process.
+**Decision:** Implement SES and Croston SBA in pure Python using NumPy (ml/forecasting/engine.py).
+**Rejected:** Adding statsforecast to equirements.txt. Too heavy, overkill for simple exponential smoothing and Croston SBA which can be implemented in ~150 lines of code.
+**Consequence:** Forecasting logic must be maintained internally, but the deployment artifact remains lightweight.
