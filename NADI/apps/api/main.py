@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from db import async_engine, AsyncSessionLocal
 from models import Base, Facility
+from routes import router as phase1_router
 
 
 @asynccontextmanager
@@ -55,8 +56,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount Phase 1 routes
+app.include_router(phase1_router)
+
 
 @app.get("/api/health")
 async def health():
     """Health check."""
-    return {"status": "ok", "phase": 0}
+    return {"status": "ok", "phase": 1}

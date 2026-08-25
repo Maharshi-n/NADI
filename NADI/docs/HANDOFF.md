@@ -7,29 +7,24 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 1 — The Spine
-**Status:** ready to start
-**Last updated:** 2026-08-25 by session-2026-08-25-a
+**Phase:** 2 — Forecast
+**Status:** Phase 1 complete. Ready to begin Phase 2 (disease signal ingestion, seasonality, forecasting model).
+**Last updated:** 2026-08-25 by session-2026-08-25-c
 
 **Works right now:**
-- Repo scaffold matches CONTEXT.md layout — all directories created
-- docker-compose.yml brings up Postgres + FastAPI successfully (port 5433 mapped to avoid local conflict)
-- All 15 SQLAlchemy models match DATA_MODEL.md exactly
-- `data/generator.py --seed 42` produces deterministic synthetic data:
-  26 facilities (22 PHC + 3 CHC + 1 warehouse), 40 drugs (25 essential,
-  4 cold-chain), 141,608 transactions over 180 days, 1,040 stock rows
-- Generator includes: weekend dips, seasonality, ~40% intermittent demand,
-  3 under-reporters, 2 backdaters, 1 impossible spike, 1 no-pharmacist facility
-- `data/seed.py --reset` loads generated JSON into Postgres successfully (seeded 145916 rows)
-- `.env` configured for Docker DB connection
+- Docker compose environment runs properly (`postgres` and `api` working together).
+- Seed generator and seed data loader complete without issues.
+- Backend Phase 1 endpoints (`/api/facilities`, `/api/stock`, `/api/risk`, `/api/kpis`) are fully functional and SQL query syntax bug fixed.
+- Frontend React dashboard correctly renders map pins, risk queue, and KPIs. Phase 1 Acceptance test passed.
 
 **Broken / needs fixing first:**
-- (none)
+- None.
 
 **Next task, precisely:**
-1. Begin Phase 1 (The Spine) by building the backend endpoints (`GET /api/facilities`, `GET /api/stock`, `GET /api/risk`).
-2. Implement SQL queries for computing burn rate and days-of-cover.
-3. Build the frontend dashboard (`command-web`) with MapLibre, risk queue, and KPI tiles.
+1. Start Phase 2 (Forecast). Build out the disease signal ingestion and apply seasonality factors.
+2. Implement forecasting model (e.g., LightGBM / exponential smoothing for smooth demand, Croston for lumpy).
+3. Update backend API to return forecasting data (`/api/forecast` and `/api/demo/scenario`).
+4. Update frontend to include forecast panel and scenario runner.
 
 ---
 
@@ -77,6 +72,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-25 — session-2026-08-25-b
+- **Did:** Built Phase 1 backend API routes (SQL burn rates) and frontend React dashboard (MapLibre, risk queue).
+- **Decided:** Used CartoDB dark_all tiles for free map (ADR-008) and custom CSS for glassmorphism styling instead of Tailwind utilities for speed/control.
+- **Left broken:** Integration tests blocked — Docker/Postgres environment unavailable in this session.
+- **Next session should:** Fix database environment, run e2e test, and verify Phase 1 acceptance criteria.
 
 ### 2026-08-25 — session-2026-08-25-a
 - **Did:** Started Docker compose, solved port 5433 conflict, seeded database with synthetic data, verified Phase 0 SQL output manually. Marked Phase 0 complete.

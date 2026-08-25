@@ -93,3 +93,11 @@ the generator on a different machine from the database.
 **Consequence:** Generator is a standalone deliverable. Generated data
 is inspectable. `data/generated/` is gitignored (45 MB). Two-step
 workflow: generate then seed.
+
+## ADR-008 — Free OpenStreetMap tiles via MapLibre GL
+**Date:** 2026-08-25 | **Session:** session-2026-08-25-b | **Status:** accepted
+**Context:** Phase 1 requires a map of facilities. We need a map provider.
+**Decision:** Use MapLibre GL with CartoDB dark_all tiles (OpenStreetMap).
+**Rejected:** Mapbox GL JS (requires token/account), Google Maps (requires billing/key).
+**Consequence:** No API keys required in .env for map functionality. Free and open.
+

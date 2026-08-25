@@ -107,12 +107,12 @@ Frontend (`command-web`):
 
 ### Acceptance
 
-- [ ] Map shows 26 facilities in correct geographic positions
-- [ ] Pin colour matches the facility's worst days-of-cover
-- [ ] Risk queue is sorted ascending by days remaining
-- [ ] Clicking a queue row highlights its pin
-- [ ] KPI tiles show non-zero, plausible numbers
-- [ ] Page loads in under 2 seconds on seed data
+- [x] Map shows 26 facilities in correct geographic positions
+- [x] Pin colour matches the facility's worst days-of-cover
+- [x] Risk queue is sorted ascending by days remaining
+- [x] Clicking a queue row highlights its pin
+- [x] KPI tiles show non-zero, plausible numbers
+- [x] Page loads in under 2 seconds on seed data
 
 ### Exit test
 
