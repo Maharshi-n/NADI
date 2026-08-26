@@ -223,11 +223,11 @@ Frontend:
 
 ### Acceptance
 
-- [ ] Plan generates in under 3 seconds
-- [ ] No proposed transfer leaves a source facility in deficit
-- [ ] Cold-chain constraint holds — verify with a cold-chain drug
-- [ ] Before/after numbers are computed, not hardcoded
-- [ ] Approving writes transfer rows and they appear in the facility view
+- [x] Plan generates in under 3 seconds
+- [x] No proposed transfer leaves a source facility in deficit
+- [x] Cold-chain constraint holds - verify with a cold-chain drug
+- [x] Before/after numbers are computed, not hardcoded
+- [x] Approving writes transfer rows and they appear in the facility view
 
 ### Exit test
 
