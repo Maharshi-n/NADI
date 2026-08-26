@@ -183,6 +183,79 @@ class ScenarioResponse(CamelModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 — Optimiser & Transfers
+# ---------------------------------------------------------------------------
+
+class PlanRequest(CamelModel):
+    district: str = "Dhar"
+    max_radius_km: Optional[float] = 65.0
+
+
+class TransferProposalItem(CamelModel):
+    from_facility_id: int
+    from_name: str
+    to_facility_id: int
+    to_name: str
+    drug_id: int
+    drug_name: str
+    unit: str = "units"
+    is_cold_chain: bool = False
+    quantity: int
+    distance_km: float
+    cost_paise: int
+    cover_restored_days: float
+    expiry_saved_paise: int
+
+
+class PlanImpact(CamelModel):
+    breaches_before: int
+    breaches_after: int
+    total_cost_paise: int
+    expiry_avoided_paise: int
+
+
+class PlanResponse(CamelModel):
+    plan_id: str
+    transfers: List[TransferProposalItem]
+    impact: PlanImpact
+
+
+class ApproveTransfersRequest(CamelModel):
+    plan_id: str
+    transfer_ids: Optional[List[int]] = None
+    transfers: Optional[List[TransferProposalItem]] = None
+
+
+class ApproveTransfersResponse(CamelModel):
+    status: str
+    plan_id: str
+    approved_count: int
+
+
+class TransferItem(CamelModel):
+    id: int
+    plan_id: Optional[str] = None
+    from_facility_id: int
+    from_name: str
+    to_facility_id: int
+    to_name: str
+    drug_id: int
+    drug_name: str
+    quantity: int
+    status: str
+    proposed_at: datetime
+    approved_at: Optional[datetime] = None
+    approved_by_role: Optional[str] = None
+    distance_km: Optional[float] = None
+    cost_paise: Optional[int] = None
+
+
+class TransferListResponse(CamelModel):
+    items: List[TransferItem]
+    total: int
+
+
+# ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
 

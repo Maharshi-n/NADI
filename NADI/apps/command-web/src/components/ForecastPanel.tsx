@@ -111,7 +111,7 @@ export function ForecastPanel({ facilityId, drugId, facilityName, drugName, onCl
   ];
 
   // Format date for axis
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr: any) => {
     const d = new Date(dateStr);
     return `${d.getDate()}/${d.getMonth() + 1}`;
   };

@@ -199,3 +199,59 @@ export function fireScenario(req: ScenarioRequest): Promise<ScenarioResponse> {
 export function resetDemo(): Promise<{ status: string; message: string }> {
   return postJSON('/demo/reset', {});
 }
+
+// ---------- Phase 3: Transfer Planner ----------
+
+export interface PlanRequest {
+  district?: string;
+  maxRadiusKm?: number;
+}
+
+export interface TransferProposalItem {
+  fromFacilityId: number;
+  fromName: string;
+  toFacilityId: number;
+  toName: string;
+  drugId: number;
+  drugName: string;
+  unit: string;
+  isColdChain: boolean;
+  quantity: number;
+  distanceKm: number;
+  costPaise: number;
+  coverRestoredDays: number;
+  expirySavedPaise: number;
+}
+
+export interface PlanImpact {
+  breachesBefore: number;
+  breachesAfter: number;
+  totalCostPaise: number;
+  expiryAvoidedPaise: number;
+}
+
+export interface PlanResponse {
+  planId: string;
+  transfers: TransferProposalItem[];
+  impact: PlanImpact;
+}
+
+export interface ApproveTransfersRequest {
+  planId: string;
+  transferIds?: number[];
+  transfers?: TransferProposalItem[];
+}
+
+export interface ApproveTransfersResponse {
+  status: string;
+  planId: string;
+  approvedCount: number;
+}
+
+export function generatePlan(req: PlanRequest = {}): Promise<PlanResponse> {
+  return postJSON('/plan', req as unknown as Record<string, unknown>);
+}
+
+export function approveTransfers(req: ApproveTransfersRequest): Promise<ApproveTransfersResponse> {
+  return postJSON('/transfers/approve', req as unknown as Record<string, unknown>);
+}

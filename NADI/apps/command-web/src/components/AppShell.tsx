@@ -14,7 +14,15 @@ const ROLES = [
  */
 type Role = typeof ROLES[number];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ 
+  children,
+  currentView = 'dashboard',
+  onViewChange
+}: { 
+  children: React.ReactNode,
+  currentView?: string,
+  onViewChange?: (view: any) => void 
+}) {
   const [currentRole, setCurrentRole] = useState<Role>(ROLES[0]);
   const [showRoles, setShowRoles] = useState(false);
 
@@ -28,6 +36,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             District Command
           </span>
         </div>
+
+        <nav style={{ display: 'flex', gap: '24px', flex: 1, marginLeft: '40px' }}>
+          <div 
+            onClick={() => onViewChange?.('dashboard')}
+            style={{ 
+              cursor: 'pointer',
+              color: currentView === 'dashboard' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontWeight: currentView === 'dashboard' ? 500 : 400,
+              borderBottom: currentView === 'dashboard' ? '2px solid var(--accent-glow)' : '2px solid transparent',
+              padding: '16px 0',
+              transition: 'all 0.2s'
+            }}
+          >
+            Dashboard
+          </div>
+          <div 
+            onClick={() => onViewChange?.('planner')}
+            style={{ 
+              cursor: 'pointer',
+              color: currentView === 'planner' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontWeight: currentView === 'planner' ? 500 : 400,
+              borderBottom: currentView === 'planner' ? '2px solid var(--accent-glow)' : '2px solid transparent',
+              padding: '16px 0',
+              transition: 'all 0.2s'
+            }}
+          >
+            Transfer Planner
+          </div>
+        </nav>
 
         <div className="app-header__right">
           <div

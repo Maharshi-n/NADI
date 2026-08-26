@@ -179,7 +179,7 @@ async def get_facility(
     """Facility detail with current stock and burn rates."""
     # Facility info
     fac_result = await db.execute(
-        text("SELECT * FROM facilities WHERE id = :fid"),
+        text("SELECT * FROM facilities WHERE id = CAST(:fid AS integer)"),
         {"fid": facility_id},
     )
     fac = fac_result.mappings().first()
@@ -725,13 +725,13 @@ async def get_forecast(
     stock_query = text("""
         SELECT COALESCE(SUM(quantity), 0) AS total
         FROM stock
-        WHERE facility_id = :fid AND drug_id = :did
+        WHERE facility_id = CAST(:fid AS integer) AND drug_id = CAST(:did AS integer)
     """)
     stock_result = await db.execute(stock_query, {"fid": facility_id, "did": drug_id})
     current_stock = stock_result.scalar() or 0
     
     # 3. Get drug category
-    drug_query = text("SELECT category FROM drugs WHERE id = :did")
+    drug_query = text("SELECT category FROM drugs WHERE id = CAST(:did AS integer)")
     drug_result = await db.execute(drug_query, {"did": drug_id})
     drug_row = drug_result.mappings().first()
     if not drug_row:
@@ -739,7 +739,7 @@ async def get_forecast(
     drug_category = drug_row["category"]
     
     # 4. Get facility district for disease signals
-    fac_query = text("SELECT district FROM facilities WHERE id = :fid")
+    fac_query = text("SELECT district FROM facilities WHERE id = CAST(:fid AS integer)")
     fac_result = await db.execute(fac_query, {"fid": facility_id})
     fac_row = fac_result.mappings().first()
     if not fac_row:
@@ -755,7 +755,7 @@ async def get_forecast(
     ds_query = text("""
         SELECT condition, week_start, case_count
         FROM disease_signal
-        WHERE district = :district
+        WHERE district = CAST(:district AS text)
         ORDER BY week_start DESC
         LIMIT 40
     """)
@@ -863,7 +863,7 @@ async def fire_scenario(
     # Get the most recent week_start
     latest_query = text("""
         SELECT MAX(week_start) AS latest FROM disease_signal
-        WHERE district = :district
+        WHERE district = CAST(:district AS text)
     """)
     latest_result = await db.execute(latest_query, {"district": district})
     latest_week = latest_result.scalar()
@@ -882,7 +882,7 @@ async def fire_scenario(
             FROM (
                 SELECT case_count
                 FROM disease_signal
-                WHERE district = :district AND condition = :condition
+                WHERE district = CAST(:district AS text) AND condition = CAST(:condition AS text)
                 ORDER BY week_start DESC
                 LIMIT 4
             ) sub
@@ -894,7 +894,7 @@ async def fire_scenario(
         
         insert_query = text("""
             INSERT INTO disease_signal (district, condition, week_start, case_count, source)
-            VALUES (:district, :condition, :week_start, :case_count, 'scenario')
+            VALUES (CAST(:district AS text), CAST(:condition AS text), CAST(:week_start AS date), CAST(:case_count AS integer), 'scenario')
         """)
         await db.execute(insert_query, {
             "district": district,
@@ -909,7 +909,7 @@ async def fire_scenario(
     invalidate_query = text("""
         DELETE FROM forecasts
         WHERE facility_id IN (
-            SELECT id FROM facilities WHERE district = :district
+            SELECT id FROM facilities WHERE district = CAST(:district AS text)
         )
     """)
     await db.execute(invalidate_query, {"district": district})
@@ -923,7 +923,7 @@ async def fire_scenario(
             FROM stock s
             JOIN drugs d ON d.id = s.drug_id
             JOIN facilities f ON f.id = s.facility_id
-            WHERE f.district = :district
+            WHERE f.district = CAST(:district AS text)
               AND d.category IN ({placeholders})
               AND s.quantity > 0
         """)
@@ -945,7 +945,7 @@ async def fire_scenario(
             FROM stock s
             JOIN drugs d ON d.id = s.drug_id
             JOIN facilities f ON f.id = s.facility_id
-            WHERE f.district = :district
+            WHERE f.district = CAST(:district AS text)
               AND d.category IN ({placeholders})
               AND s.quantity > 0
         """)
@@ -959,7 +959,7 @@ async def fire_scenario(
         
         ds_query = text("""
             SELECT condition, week_start, case_count
-            FROM disease_signal WHERE district = :district
+            FROM disease_signal WHERE district = CAST(:district AS text)
             ORDER BY week_start DESC LIMIT 40
         """)
         ds_result = await db.execute(ds_query, {"district": district})
@@ -976,7 +976,7 @@ async def fire_scenario(
             hist_q = text("""
                 SELECT DATE(t.occurred_at) AS date, SUM(t.quantity) AS quantity
                 FROM transactions t
-                WHERE t.facility_id = :fid AND t.drug_id = :did
+                WHERE t.facility_id = CAST(:fid AS integer) AND t.drug_id = CAST(:did AS integer)
                   AND t.type = 'dispense'
                   AND t.occurred_at >= (
                       (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '180 days'
@@ -1003,7 +1003,7 @@ async def fire_scenario(
                 current += timedelta(days=1)
             
             # Get stock
-            stock_q = text("SELECT COALESCE(SUM(quantity), 0) FROM stock WHERE facility_id = :fid AND drug_id = :did")
+            stock_q = text("SELECT COALESCE(SUM(quantity), 0) FROM stock WHERE facility_id = CAST(:fid AS integer) AND drug_id = CAST(:did AS integer)")
             stock_val = (await db.execute(stock_q, {"fid": fid, "did": did})).scalar() or 0
             
             # Compute forecast
@@ -1022,7 +1022,7 @@ async def fire_scenario(
             upsert_q = text("""
                 INSERT INTO forecasts (facility_id, drug_id, predicted_daily_rate,
                     days_to_stockout, confidence, driver_label, method_used)
-                VALUES (:fid, :did, :rate, :dts, :conf, :driver, :method)
+                VALUES (CAST(:fid AS integer), CAST(:did AS integer), CAST(:rate AS numeric), CAST(:dts AS integer), CAST(:conf AS numeric), CAST(:driver AS text), CAST(:method AS text))
                 ON CONFLICT (facility_id, drug_id) DO UPDATE SET
                     predicted_daily_rate = EXCLUDED.predicted_daily_rate,
                     days_to_stockout = EXCLUDED.days_to_stockout,
@@ -1039,8 +1039,8 @@ async def fire_scenario(
                     "driver": fc_result["driver"],
                     "method": fc_result["method_used"],
                 })
-            except Exception:
-                pass  # Non-fatal
+            except Exception as e:
+                print(f"UPSERT ERROR: {e}")
     
     return ScenarioResponse(
         affected=affected_facilities,
@@ -1084,7 +1084,7 @@ async def reset_demo(
                 ws = date_type.fromisoformat(ws)
             insert_q = text("""
                 INSERT INTO disease_signal (district, condition, week_start, case_count, source)
-                VALUES (:district, :condition, :week_start, :case_count, :source)
+                VALUES (CAST(:district AS text), CAST(:condition AS text), CAST(:week_start AS date), CAST(:case_count AS integer), CAST(:source AS text))
             """)
             await db.execute(insert_q, {
                 "district": s["district"],
@@ -1112,4 +1112,289 @@ async def reset_demo(
             })
     
     return {"status": "reset", "message": "Seed state restored"}
+
+
+# ===========================================================================
+# PHASE 3 — Transfer Optimizer Endpoints
+# ===========================================================================
+
+from schemas import (
+    PlanRequest,
+    PlanResponse,
+    TransferProposalItem,
+    PlanImpact,
+    ApproveTransfersRequest,
+    ApproveTransfersResponse,
+    TransferItem,
+    TransferListResponse,
+)
+from optimizer.engine import optimize_transfers
+
+
+@router.post("/plan", response_model=PlanResponse)
+async def generate_plan(
+    request: PlanRequest = PlanRequest(),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate an intra-district stock redistribution plan using OR-Tools min-cost flow.
+    Surplus: >60 days cover (leaves >= 30 days cover at source).
+    Deficit: <15 days cover (restores to 45 days cover).
+    Cold-chain constraint strictly enforced.
+    Honest before/after breach impact calculated.
+    """
+    district = request.district
+    max_radius = request.max_radius_km or 65.0
+
+    # 1. Fetch facilities in district
+    fac_q = text("""
+        SELECT id, name, type, lat, lng, cold_chain_capable, district
+        FROM facilities
+        WHERE district = :district
+    """)
+    fac_res = await db.execute(fac_q, {"district": district})
+    facilities = [dict(r) for r in fac_res.mappings().all()]
+
+    if not facilities:
+        raise HTTPException(status_code=404, detail=f"No facilities found for district {district}")
+
+    # 2. Fetch all drugs
+    drug_q = text("""
+        SELECT id, name, unit, category, is_essential, is_cold_chain, shelf_life_months
+        FROM drugs
+    """)
+    drug_res = await db.execute(drug_q)
+    drugs = [dict(r) for r in drug_res.mappings().all()]
+
+    # 3. Fetch stock records
+    stock_q = text("""
+        SELECT s.facility_id, s.drug_id, s.quantity, s.expiry_date
+        FROM stock s
+        JOIN facilities f ON f.id = s.facility_id
+        WHERE f.district = :district
+    """)
+    stock_res = await db.execute(stock_q, {"district": district})
+    stock_records = [dict(r) for r in stock_res.mappings().all()]
+
+    # 4. Fetch burn rates / predicted rates
+    # First get predicted rates from forecasts table
+    fc_q = text("""
+        SELECT fc.facility_id, fc.drug_id, fc.predicted_daily_rate
+        FROM forecasts fc
+        JOIN facilities f ON f.id = fc.facility_id
+        WHERE f.district = :district AND fc.predicted_daily_rate IS NOT NULL
+    """)
+    fc_res = await db.execute(fc_q, {"district": district})
+    fc_map = {(r["facility_id"], r["drug_id"]): float(r["predicted_daily_rate"]) for r in fc_res.mappings().all()}
+
+    # Then get 30-day dispensing burn rates as fallback/baseline
+    burn_q = text("""
+        SELECT t.facility_id, t.drug_id,
+               COALESCE(SUM(t.quantity), 0)::float / 30.0 AS burn_rate
+        FROM transactions t
+        JOIN facilities f ON f.id = t.facility_id
+        WHERE f.district = :district
+          AND t.type = 'dispense'
+          AND t.occurred_at >= (
+              (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '30 days'
+          )
+        GROUP BY t.facility_id, t.drug_id
+    """)
+    burn_res = await db.execute(burn_q, {"district": district})
+    burn_rates = {}
+    for r in burn_res.mappings().all():
+        key = (r["facility_id"], r["drug_id"])
+        rate = float(r["burn_rate"] or 0.0)
+        # Use forecast predicted rate if available and > 0, else 30-day burn rate
+        if key in fc_map and fc_map[key] > 0:
+            burn_rates[key] = fc_map[key]
+        else:
+            burn_rates[key] = rate
+
+    # Also include any forecast entries not in 30-day dispensing
+    for key, rate in fc_map.items():
+        if key not in burn_rates and rate > 0:
+            burn_rates[key] = rate
+
+    # 5. Run OR-Tools optimizer
+    plan_result = optimize_transfers(
+        facilities=facilities,
+        drugs=drugs,
+        stock_records=stock_records,
+        burn_rates=burn_rates,
+        max_radius_km=max_radius,
+    )
+
+    transfer_items = [
+        TransferProposalItem(
+            from_facility_id=t["fromFacilityId"],
+            from_name=t["fromName"],
+            to_facility_id=t["toFacilityId"],
+            to_name=t["toName"],
+            drug_id=t["drugId"],
+            drug_name=t["drugName"],
+            unit=t["unit"],
+            is_cold_chain=t["isColdChain"],
+            quantity=t["quantity"],
+            distance_km=t["distanceKm"],
+            cost_paise=t["costPaise"],
+            cover_restored_days=t["coverRestoredDays"],
+            expiry_saved_paise=t["expirySavedPaise"],
+        )
+        for t in plan_result["transfers"]
+    ]
+
+    impact_item = PlanImpact(
+        breaches_before=plan_result["impact"]["breachesBefore"],
+        breaches_after=plan_result["impact"]["breachesAfter"],
+        total_cost_paise=plan_result["impact"]["totalCostPaise"],
+        expiry_avoided_paise=plan_result["impact"]["expiryAvoidedPaise"],
+    )
+
+    return PlanResponse(
+        plan_id=plan_result["planId"],
+        transfers=transfer_items,
+        impact=impact_item,
+    )
+
+
+@router.post("/transfers/approve", response_model=ApproveTransfersResponse)
+async def approve_transfers(
+    request: ApproveTransfersRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Approve proposed transfer plan or selected transfers.
+    Writes rows to transfers table with status='approved' and generates records.
+    """
+    approved_count = 0
+
+    if request.transfers:
+        for t in request.transfers:
+            insert_q = text("""
+                INSERT INTO transfers (
+                    from_facility_id, to_facility_id, drug_id, quantity,
+                    status, proposed_at, approved_at, approved_by_role,
+                    distance_km, cost_paise, plan_id
+                ) VALUES (
+                    :from_fid, :to_fid, :did, :qty,
+                    'approved', NOW(), NOW(), 'cmho',
+                    :dist, :cost, :plan_id
+                )
+            """)
+            await db.execute(insert_q, {
+                "from_fid": t.from_facility_id,
+                "to_fid": t.to_facility_id,
+                "did": t.drug_id,
+                "qty": t.quantity,
+                "dist": t.distance_km,
+                "cost": t.cost_paise,
+                "plan_id": request.plan_id,
+            })
+            approved_count += 1
+
+    elif request.transfer_ids:
+        update_q = text("""
+            UPDATE transfers
+            SET status = 'approved', approved_at = NOW(), approved_by_role = 'cmho'
+            WHERE id = ANY(:tids)
+        """)
+        res = await db.execute(update_q, {"tids": request.transfer_ids})
+        approved_count = res.rowcount or len(request.transfer_ids)
+
+    return ApproveTransfersResponse(
+        status="approved",
+        plan_id=request.plan_id,
+        approved_count=approved_count,
+    )
+
+
+@router.get("/transfers", response_model=TransferListResponse)
+async def list_transfers(
+    facility_id: Optional[int] = Query(None, alias="facilityId"),
+    status: Optional[str] = None,
+    plan_id: Optional[str] = Query(None, alias="planId"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List recorded transfers with facility and drug details.
+    """
+    query = text("""
+        SELECT
+            t.id,
+            t.plan_id,
+            t.from_facility_id,
+            f1.name AS from_name,
+            t.to_facility_id,
+            f2.name AS to_name,
+            t.drug_id,
+            d.name AS drug_name,
+            t.quantity,
+            t.status,
+            t.proposed_at,
+            t.approved_at,
+            t.approved_by_role,
+            t.distance_km,
+            t.cost_paise
+        FROM transfers t
+        JOIN facilities f1 ON f1.id = t.from_facility_id
+        JOIN facilities f2 ON f2.id = t.to_facility_id
+        JOIN drugs d ON d.id = t.drug_id
+        WHERE (CAST(:fid AS int) IS NULL OR t.from_facility_id = :fid OR t.to_facility_id = :fid)
+          AND (CAST(:status AS text) IS NULL OR CAST(t.status AS text) = :status)
+          AND (CAST(:plan_id AS text) IS NULL OR t.plan_id = :plan_id)
+        ORDER BY t.proposed_at DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    count_q = text("""
+        SELECT COUNT(*)
+        FROM transfers t
+        WHERE (CAST(:fid AS int) IS NULL OR t.from_facility_id = :fid OR t.to_facility_id = :fid)
+          AND (CAST(:status AS text) IS NULL OR CAST(t.status AS text) = :status)
+          AND (CAST(:plan_id AS text) IS NULL OR t.plan_id = :plan_id)
+    """)
+
+    params = {
+        "fid": facility_id,
+        "status": status,
+        "plan_id": plan_id,
+        "limit": limit,
+        "offset": offset,
+    }
+
+    res = await db.execute(query, params)
+    rows = res.mappings().all()
+
+    total_res = await db.execute(count_q, {
+        "fid": facility_id,
+        "status": status,
+        "plan_id": plan_id,
+    })
+    total = total_res.scalar() or 0
+
+    items = [
+        TransferItem(
+            id=r["id"],
+            plan_id=r["plan_id"],
+            from_facility_id=r["from_facility_id"],
+            from_name=r["from_name"],
+            to_facility_id=r["to_facility_id"],
+            to_name=r["to_name"],
+            drug_id=r["drug_id"],
+            drug_name=r["drug_name"],
+            quantity=r["quantity"],
+            status=r["status"],
+            proposed_at=r["proposed_at"],
+            approved_at=r["approved_at"],
+            approved_by_role=r["approved_by_role"],
+            distance_km=r["distance_km"],
+            cost_paise=r["cost_paise"],
+        )
+        for r in rows
+    ]
+
+    return TransferListResponse(items=items, total=total)
 

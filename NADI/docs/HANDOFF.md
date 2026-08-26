@@ -7,9 +7,9 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 2 — Forecast
-**Status:** Phase 2 core complete. Forecasting engine, API endpoints, and frontend panels all functional.
-**Last updated:** 2026-08-25 by session-2026-08-25-d
+**Phase:** 3 — Optimiser
+**Status:** Phase 3 complete. Backend min-cost flow engine, plan API, transfer approval workflow, and frontend Transfer Planner route with interactive map and impact panel are fully functional.
+**Last updated:** 2026-08-26 by session-2026-08-26-a
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -21,15 +21,15 @@ session. Append to the log. Never let this drift from reality.
 - **Frontend ForecastPanel** — Recharts ComposedChart showing history line, forecast band, reorder line, stockout marker. Shows driver chip and method badge.
 - **Frontend ScenarioRunner** — condition dropdown, multiplier slider, fire/reset buttons.
 - **RiskQueue** shows confidence and driver from Phase 2 data when available.
-- `test_phase2.py` passes all 7 tests (forecast smooth, forecast lumpy, scenario fire, reset).
+- **Phase 3 Transfer Planner** (`TransferPlanner.tsx`): MapLibre integration showing directional transfer lines (`TransferMap`), an interactive impact panel (`ImpactPanel`), and a transfer approval list (`TransferTable`).
+- **Phase 3 Backend API**: `POST /api/plan` runs the OR-Tools optimizer, and `POST /api/transfers/approve` persists transfers into PostgreSQL. `test_phase3.py` passes all verification checks.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
 - None.
 
 **Next task, precisely:**
-1. Verify Phase 2 acceptance criteria per PHASES.md — fire outbreak → risk queue reorders sensibly.
-2. Start Phase 3 (Transfer) or polish Phase 2 further (forecast chart scrolling, loading animations).
+1. Start Phase 4 (Mobile/Field Interface) or finalize remaining polish on Phase 3 (animations, transitions).
 
 ---
 
@@ -79,6 +79,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-a
+- **Did:** Fixed Phase 3 backend import and SQL casting bugs. Verified `test_phase3.py` passes. Built Phase 3 frontend components: `TransferPlanner`, `TransferMap`, `ImpactPanel`, and `TransferTable`. Integrated frontend with the `generatePlan` and `approveTransfers` API endpoints.
+- **Decided:** Used maplibre-gl GeoJSON line strings to draw transfer lines on the map.
+- **Left broken:** None. Phase 3 is complete.
+- **Next session should:** Begin Phase 4 (Mobile/Field app) or add polish.
 
 ### 2026-08-25 — session-2026-08-25-d
 - **Did:** Built Phase 2 forecasting: `ml/forecasting/engine.py` (SES + Croston SBA), 3 new API endpoints (`/forecast`, `/demo/scenario`, `/demo/reset`), frontend ForecastPanel + ScenarioRunner + RiskQueue upgrades. Upgraded `/api/risk` and `/api/facilities` to read from the `forecasts` table, allowing map pins and risk queue to instantly update when a scenario fires. All 7 API tests pass.
