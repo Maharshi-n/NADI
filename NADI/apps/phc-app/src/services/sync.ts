@@ -38,3 +38,32 @@ export async function queueMutation(mutation: Omit<PendingMutation, 'synced'>) {
   // Attempt sync immediately, but don't block
   syncMutations().catch(console.error);
 }
+
+export async function fetchStockFromServer() {
+  try {
+    const response = await fetch('/api/stock?facilityId=1');
+    if (!response.ok) throw new Error('Failed to fetch stock');
+    const data = await response.json();
+    if (data && data.items) {
+      await db.transaction('rw', db.stock, async () => {
+        // We can either clear and repopulate or just bulkPut to update existing
+        // For simplicity, let's clear and insert the truth from server
+        await db.stock.clear();
+        await db.stock.bulkPut(data.items.map((item: any) => ({
+          drugId: item.drugId,
+          name: item.name,
+          quantity: item.quantity,
+          unit: item.unit,
+          daysOfCover: item.daysOfCover ?? 999,
+          expiryDate: item.expiryDate ?? '2099-01-01',
+          status: item.status ?? 'healthy'
+        })));
+      });
+      return true;
+    }
+  } catch (err) {
+    console.error('Failed to sync stock from server:', err);
+    return false;
+  }
+}
+

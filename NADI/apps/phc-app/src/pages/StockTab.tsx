@@ -15,7 +15,7 @@ export function StockTab() {
     { drugId: 3, name: 'ORS Sachet', quantity: 300, unit: 'sachet', daysOfCover: 22, status: 'warning', expiryDate: '2027-05-20' },
   ];
 
-  const filtered = displayItems.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = displayItems.filter(i => (i.name || '').toLowerCase().includes((search || '').toLowerCase()));
 
   return (
     <div className="space-y-4">
@@ -43,7 +43,7 @@ export function StockTab() {
                 item.status === 'warning' ? 'bg-warning/20 text-warning border border-warning/30' :
                 'bg-success/20 text-success border border-success/30'
               }`}>
-                {item.daysOfCover} days
+                {item.daysOfCover === 999 ? '> 90' : Math.round(item.daysOfCover)} days
               </span>
             </div>
           </div>

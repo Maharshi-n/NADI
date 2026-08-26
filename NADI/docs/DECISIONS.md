@@ -148,3 +148,24 @@ workflow: generate then seed.
 **Decision:** Use an inline `conic-gradient` style applied to a Tailwind `rounded-full` div.
 **Rejected:** SVG with `stroke-dasharray` and `stroke-dashoffset`. SVG is technically more robust but significantly more verbose in a simple React component that doesn't need to scale dynamically.
 **Consequence:** Simple, performant CSS-only circle fill that is easy to template dynamically in JSX.
+
+## ADR-016 — Map unrecognized drugs to db.stock master list in UI
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-d | **Status:** accepted
+**Context:** Gemini Vision API fuzzy matching sometimes fails to recognize a drug, returning `drugId: null`. The user needs to manually map these to a known drug before confirming.
+**Decision:** Map unrecognized drugs to the local `db.stock` table (via Dexie) as the master list.
+**Rejected:** Fetching a new `/api/drugs` master list from the backend. The PHC app is an offline-first PWA. Relying on an API call during the scan flow breaks offline functionality.
+**Consequence:** Unrecognized drugs can only be mapped to drugs that are already known/stocked at the facility.
+
+## ADR-017 — Complete removal of Batch Number parsing
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-e | **Status:** accepted
+**Context:** The LLM was configured to extract batch numbers from scanned documents, but user found the UI cluttered and requested the feature be entirely removed.
+**Decision:** Removed `batch_no` from the Gemini extraction prompt, the database insertion mapping, and the frontend ScanTab inputs.
+**Rejected:** Just hiding it in the UI but keeping it in the prompt (wastes LLM tokens and latency).
+**Consequence:** The `transactions` table fallback (`UNKNOWN`) handles the null constraints. This feature must not be restored in future phases.
+
+## ADR-018 — Modal popup for mapping unrecognized drugs
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-e | **Status:** accepted
+**Context:** Inline `<input list="datalist">` elements in the scanned rows were cluttering the UI and prone to accidental clicks/edits on mobile.
+**Decision:** Replaced the inline input with a static clickable `div` that triggers a full-screen mobile modal (bottom sheet/overlay) for editing the medicine name. Added a prominent red `UNRECOGNIZED DRUG` tag when the drug doesn't match.
+**Rejected:** Accordion rows or inline editing. A modal provides a focused, native-app-like experience for text entry and datalist selection on mobile screens.
+**Consequence:** State management for `editingRowIndex` added to `ScanTab`.

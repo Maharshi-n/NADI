@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { FacilityItem, TransferProposalItem } from '../api/client';
@@ -16,6 +16,7 @@ export function TransferMap({ facilities, transfers }: TransferMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<number, maplibregl.Marker>>(new Map());
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // Initialize map
   useEffect(() => {
@@ -76,6 +77,8 @@ export function TransferMap({ facilities, transfers }: TransferMapProps) {
           'line-dasharray': [2, 4]
         }
       });
+      
+      setMapLoaded(true);
     });
 
     return () => {
@@ -119,7 +122,7 @@ export function TransferMap({ facilities, transfers }: TransferMapProps) {
   // Update transfer lines
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !mapLoaded) return;
 
     const source = map.getSource('transfers-source') as maplibregl.GeoJSONSource;
     if (!source) return;

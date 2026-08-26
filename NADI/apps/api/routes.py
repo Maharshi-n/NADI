@@ -1283,11 +1283,10 @@ async def scan_register(image: UploadFile = File(...), db: AsyncSession = Depend
         You are a medical data extraction assistant. Extract rows of drug stock information from this register image.
         Return ONLY a JSON array of objects. Each object must have:
         - raw_text: The raw text of the drug name exactly as written
-        - batch_no: The batch number
         - quantity: The quantity (integer)
         - expiry_date: The expiry date (YYYY-MM-DD format)
         - confidence: A confidence score between 0.0 and 1.0 representing how clearly you could read this row
-        - uncertain_fields: An array of strings representing field names (like "quantity", "batchNo", "expiryDate") that were hard to read or blurry.
+        - uncertain_fields: An array of strings representing field names (like "quantity", "expiryDate") that were hard to read or blurry.
         If you are unsure of a field, make your best guess but include it in uncertain_fields.
         '''
         
@@ -1325,7 +1324,7 @@ async def scan_register(image: UploadFile = File(...), db: AsyncSession = Depend
             "drugId": drug_id,
             "matchedName": matched_name,
             "rawText": raw_name,
-            "batchNo": item.get("batch_no", ""),
+            "batchNo": "",
             "quantity": int(item.get("quantity", 0)),
             "expiryDate": item.get("expiry_date", "2027-01-01"),
             "confidence": item.get("confidence", 0.9),
@@ -1350,17 +1349,40 @@ async def confirm_scan(payload: dict, db: AsyncSession = Depends(get_db)):
         
         for row in rows:
             drug_id = row.get("drugId")
-            if not drug_id:
+            matched_name = row.get("matchedName")
+            if not drug_id and not matched_name:
                 continue
                 
+            if not drug_id and matched_name:
+                # Create a new drug with defaults
+                insert_drug_q = text("""
+                    INSERT INTO drugs (name, salt, strength, form, unit, category, is_essential, is_cold_chain, shelf_life_months, atc_class)
+                    VALUES (:name, 'Unknown', 'Unknown', 'Unknown', 'tab', 'Uncategorized', false, false, 24, 'Unknown')
+                    RETURNING id
+                """)
+                res = await db.execute(insert_drug_q, {"name": matched_name})
+                drug_id = res.scalar()
+                
             qty = row.get("quantity", 0)
-            batch = row.get("batchNo", "UNKNOWN")
-            exp = row.get("expiryDate", "2027-01-01")
+            batch = row.get("batchNo")
+            if not batch:
+                batch = "UNKNOWN"
+            
+            exp = row.get("expiryDate")
+            if not exp:
+                exp = "2027-01-01"
+            
+            # asyncpg requires actual datetime.date objects for date columns
+            from datetime import datetime
+            try:
+                exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+            except ValueError:
+                exp_date = datetime.strptime("2027-01-01", "%Y-%m-%d").date()
             
             # Upsert into stock
             upsert_q = text("""
                 INSERT INTO stock (facility_id, drug_id, batch_no, quantity, expiry_date, trust_score)
-                VALUES (:fid, :did, :batch, :qty, CAST(:exp AS date), :trust)
+                VALUES (:fid, :did, :batch, :qty, :exp, :trust)
                 ON CONFLICT (facility_id, drug_id) DO UPDATE SET
                     quantity = stock.quantity + EXCLUDED.quantity,
                     last_updated = now()
@@ -1380,9 +1402,9 @@ async def confirm_scan(payload: dict, db: AsyncSession = Depends(get_db)):
             else:
                 insert_q = text("""
                     INSERT INTO stock (facility_id, drug_id, batch_no, quantity, expiry_date, trust_score)
-                    VALUES (:fid, :did, :batch, :qty, CAST(:exp AS date), 1.0)
+                    VALUES (:fid, :did, :batch, :qty, :exp, 1.0)
                 """)
-                await db.execute(insert_q, {"fid": facility_id, "did": drug_id, "batch": batch, "qty": qty, "exp": exp})
+                await db.execute(insert_q, {"fid": facility_id, "did": drug_id, "batch": batch, "qty": qty, "exp": exp_date})
                 
             # Add transaction
             tx_q = text("""
@@ -1395,6 +1417,8 @@ async def confirm_scan(payload: dict, db: AsyncSession = Depends(get_db)):
         return {"status": "success", "updated": len(rows)}
     except Exception as e:
         await db.rollback()
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

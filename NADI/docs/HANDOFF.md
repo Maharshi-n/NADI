@@ -8,8 +8,8 @@ session. Append to the log. Never let this drift from reality.
 ## Current state
 
 **Phase:** 5 - Capacity & Referrals
-**Status:** Phase 4 (PHC app) is fully complete. Gemini Vision API register scanning is fixed and tested.
-**Last updated:** 2026-08-26 by session-2026-08-26-c
+**Status:** Phase 4 (PHC app) is fully complete. Gemini Vision API scan/sync is fixed and UI has been polished per user feedback.
+**Last updated:** 2026-08-26 by session-2026-08-26-e
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -25,11 +25,11 @@ session. Append to the log. Never let this drift from reality.
 - **Phase 3 Backend API**: `POST /api/plan` runs the OR-Tools optimizer, and `POST /api/transfers/approve` persists transfers into PostgreSQL. `test_phase3.py` passes all verification checks.
 - **Phase 4 PHC App**: Vite React PWA setup (`apps/phc-app`) with TailwindCSS, Lucide icons, Dexie for offline IndexedDB storage.
 - **Phase 4 Scanning**: Gemini Vision integration via `/api/scan` for register ingestion and fuzzy matching, with offline mutation queueing logic.
+- **Phase 4 UI Polish**: App explicitly listens on 0.0.0.0. "Batch Number" parsing completely removed. Unrecognized drugs display an explicit tag and can be mapped using a mobile-friendly modal popup.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
-- `/api/scan/confirm` crashes with 500 error on empty expiry dates (fails SQL CAST).
-- Scan UI needs editable rows and a dropdown to map unrecognized drugs to the master list.
+- None. Phase 4 bugs are fixed.
 
 **Next task, precisely:**
 1. Start Phase 5 (Capacity & Referrals). Add BedEvents and StaffDaily endpoints to integrate facility capacities.
@@ -40,7 +40,7 @@ session. Append to the log. Never let this drift from reality.
 
 Format: `- [session-id] area — paths you will touch`
 
-- [session-2026-08-26-d] Capacity — apps/api/**, apps/web/**
+- [session-2026-08-26-e] Capacity — apps/api/**, apps/web/**
 
 ---
 
@@ -53,6 +53,7 @@ pick one up as a task.
 |---|---|---|---|
 | 1 | Docs reference `docs/` paths but were at root — now moved | docs/ | resolved |
 | 2 | transactions.json is 45 MB — may want binary/parquet for speed | data/generated | low |
+| 3 | Batch number OCR parsing deliberately removed per user request. DO NOT RESTORE. | apps/api/routes.py | intentional |
 
 ---
 
@@ -82,6 +83,18 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-e
+- **Did:** Removed `batch_no` OCR parsing completely. Redesigned Scan UI to use a modal popup for drug mapping instead of inline inputs. Added explicit `UNRECOGNIZED DRUG` badges. Fixed Days of Cover rounding logic (`> 90 days`). Ensured Vite dev server listens on 0.0.0.0 for LAN access.
+- **Decided:** Completely abandon the batch number feature per user preference (ADR-017). Use a mobile-first Modal for drug mapping (ADR-018).
+- **Left broken:** None.
+- **Next session should:** Begin Phase 5 (Capacity & Referrals).
+
+### 2026-08-26 — session-2026-08-26-d
+- **Did:** Fixed 500 error in `/api/scan/confirm` by handling empty expiry dates correctly. Added editable rows and drug mapping dropdown to the Phase 4 `ScanTab` UI. Fixed missing PWA types in frontend `tsconfig.json`.
+- **Decided:** Mapped unrecognized drugs to `db.stock` master list in Dexie to allow users to associate fuzzy string matches.
+- **Left broken:** None.
+- **Next session should:** Begin Phase 5 (Capacity & Referrals).
 
 ### 2026-08-26 — session-2026-08-26-c
 - **Did:** Fixed Gemini API scan endpoint 404 error by migrating to `gemini-3.1-flash-lite`. Fixed UI bug where CBI score circle showed 100% full instead of 60% by switching from solid border to conic-gradient. Stopped all backend and frontend dev servers.

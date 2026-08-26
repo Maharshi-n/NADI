@@ -8,8 +8,12 @@ import { useEffect } from 'react';
 import { syncMutations } from './services/sync';
 
 function App() {
-  // Try to sync when coming back online
   useEffect(() => {
+    // Initial fetch of stock from server to populate local DB
+    import('./services/sync').then(({ fetchStockFromServer }) => {
+      fetchStockFromServer().catch(console.error);
+    });
+
     const handleOnline = () => {
       console.log('Back online, syncing mutations...');
       syncMutations().catch(console.error);
