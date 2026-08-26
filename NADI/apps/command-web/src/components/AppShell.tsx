@@ -64,6 +64,19 @@ export function AppShell({
           >
             Transfer Planner
           </div>
+          <div 
+            onClick={() => onViewChange?.('federation')}
+            style={{ 
+              cursor: 'pointer',
+              color: currentView === 'federation' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontWeight: currentView === 'federation' ? 500 : 400,
+              borderBottom: currentView === 'federation' ? '2px solid var(--accent-glow)' : '2px solid transparent',
+              padding: '16px 0',
+              transition: 'all 0.2s'
+            }}
+          >
+            Federation
+          </div>
         </nav>
 
         <div className="app-header__right">

@@ -395,12 +395,12 @@ Frontend:
 
 ### Acceptance
 
-- [ ] Five clients train and aggregate across at least seven rounds
-- [ ] Federated curve beats the single-state baseline
-- [ ] Transfer log shows real byte counts, not placeholders
-- [ ] Cold-start state's forecast is materially better than a
+- [x] Five clients train and aggregate across at least seven rounds
+- [x] Federated curve beats the single-state baseline
+- [x] Transfer log shows real byte counts, not placeholders
+- [x] Cold-start state's forecast is materially better than a
       history-less baseline
-- [ ] No raw record crosses a client boundary — verifiable in the code path
+- [x] No raw record crosses a client boundary — verifiable in the code path
 
 ### Exit test
 

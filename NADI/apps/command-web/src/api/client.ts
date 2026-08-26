@@ -286,3 +286,42 @@ export function fetchCapacity(params?: {
 }): Promise<CapacityResponse | CapacityResponse[]> {
   return fetchJSON('/capacity', params);
 }
+
+// ---------- Phase 6: Federation ----------
+
+export interface FlRoundResponse {
+  id: number;
+  roundNo: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  aggregationMethod: string | null;
+  clientsParticipating: number | null;
+  bytesTransferred: number | null;
+  tensorCount: number | null;
+  globalAccuracy: number | null;
+  baselineAccuracy: number | null;
+  patientRecordsTransferred: number;
+  stockRowsTransferred: number;
+}
+
+export interface FlClientResponse {
+  id: number;
+  stateName: string;
+  sampleCount: number | null;
+  lastRound: number | null;
+  modelVersion: string | null;
+  status: string | null;
+}
+
+export interface FederationStatusResponse {
+  rounds: FlRoundResponse[];
+  clients: FlClientResponse[];
+}
+
+export function fetchFederationStatus(): Promise<FederationStatusResponse> {
+  return fetchJSON('/federation/status');
+}
+
+export function runFederationSimulation(): Promise<{ status: string; message: string }> {
+  return postJSON('/demo/federation/run', {});
+}

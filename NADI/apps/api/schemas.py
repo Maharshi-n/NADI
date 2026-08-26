@@ -363,3 +363,36 @@ class StaffCheckinResponse(CamelModel):
     present: int
     required: int
 
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Federation
+# ---------------------------------------------------------------------------
+
+class FlRoundResponse(CamelModel):
+    id: int
+    round_no: int
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    aggregation_method: Optional[str] = None
+    clients_participating: Optional[int] = None
+    bytes_transferred: Optional[int] = None
+    tensor_count: Optional[int] = None
+    global_accuracy: Optional[float] = None
+    baseline_accuracy: Optional[float] = None
+    patient_records_transferred: int = 0
+    stock_rows_transferred: int = 0
+
+
+class FlClientResponse(CamelModel):
+    id: int
+    state_name: str
+    sample_count: Optional[int] = None
+    last_round: Optional[int] = None
+    model_version: Optional[str] = None
+    status: Optional[str] = None
+
+
+class FederationStatusResponse(CamelModel):
+    rounds: List[FlRoundResponse]
+    clients: List[FlClientResponse]
+

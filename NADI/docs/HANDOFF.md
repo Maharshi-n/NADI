@@ -7,9 +7,9 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 5 - Capacity & Referrals
-**Status:** Phase 5 is fully implemented. The dashboard now ranks facilities by a composite Capacity Bottleneck Index (CBI) evaluating medicine, beds, and staff.
-**Last updated:** 2026-08-26 by session-2026-08-26-f
+**Phase:** 6 - Federation
+**Status:** Phase 6 is fully implemented. The simulated FedProx federated learning environment successfully trains across 5 state clients and persists round data to the database, verifiable via the Command Web Federation UI.
+**Last updated:** 2026-08-26 by session-2026-08-26-g
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -28,13 +28,15 @@ session. Append to the log. Never let this drift from reality.
 - **Phase 4 UI Polish**: App explicitly listens on 0.0.0.0. "Batch Number" parsing completely removed. Unrecognized drugs display an explicit tag and can be mapped using a mobile-friendly modal popup.
 - **Phase 5 Capacity**: `/api/capacity` computes a Capacity Bottleneck Index (CBI) dynamically in SQL (min of medicine, beds, staff scores). Staff inferences (no dispensing = no pharmacist) implemented.
 - **Phase 5 UI**: `CapacityPanel` overlays the map to show CBI ring, constraint bars, bed spillover info, and staff roster. RiskQueue flags facilities with staff/bed bottlenecks instead of just medicines.
+- **Phase 6 Federation API**: Added `/api/federation/status` (fetches `fl_rounds` and `fl_clients`) and `/api/demo/federation/run` (triggers `simulation.py`).
+- **Phase 6 Federation UI**: Built `FederationDashboard.tsx` in `apps/command-web`. Features 5 state cards showing training status and sample size, an accuracy line chart (FedProx vs Baseline), a mono-font transfer log proving zero raw records were transferred, and a cold-start callout for Chhattisgarh.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
-- None. Phase 4 bugs are fixed.
+- None.
 
 **Next task, precisely:**
-1. Start Phase 5 (Capacity & Referrals). Add BedEvents and StaffDaily endpoints to integrate facility capacities.
+1. Start Phase 7 (Trust). Implement Benford's law anomaly detection and the hash-chained ledger.
 
 ---
 
@@ -42,7 +44,7 @@ session. Append to the log. Never let this drift from reality.
 
 Format: `- [session-id] area — paths you will touch`
 
-- [session-2026-08-26-e] Capacity — apps/api/**, apps/web/**
+- (none)
 
 ---
 
@@ -85,6 +87,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-g
+- **Did:** Implemented Phase 6 Federation features. Built `ml/federated/simulation.py` to mock 10 rounds of training across 5 states. Added API endpoints to retrieve training data. Created `FederationDashboard` with state cards, Recharts accuracy comparison, and a live transfer log.
+- **Decided:** Use FedProx over FedAvg for simulated state clients because of non-IID data distributions (ADR-021).
+- **Left broken:** None. The Federation dashboard successfully visualizes the FedProx simulation metrics and proves privacy constraints.
+- **Next session should:** Begin Phase 7 (Trust).
 
 ### 2026-08-26 — session-2026-08-26-f
 - **Did:** Implemented Phase 5 Capacity features. Added endpoints for CBI computation (`/api/capacity`), bed events, and staff check-ins. Updated `GET /api/risk` to include staff/bed bottlenecks alongside medicines. Built `CapacityPanel` UI with CBI rings and constraint bars. Fixed Vite proxy configuration for docker.

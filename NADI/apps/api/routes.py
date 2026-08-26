@@ -574,82 +574,106 @@ async def list_risk(
         cap_res = await db.execute(capacity_q, {"district": district})
         cap_rows = cap_res.mappings().all()
 
-        for cr in cap_rows:
-            # Check staff bottleneck
-            if cr["staff_score"] <= 0.5 or cr["bottleneck"] == "staff":
-                # Check which staff role is missing
-                staff_q = text("""
-                    SELECT role, present, required
-                    FROM staff_daily
-                    WHERE facility_id = :fid
-                    ORDER BY date DESC
-                """)
-                staff_res = await db.execute(staff_q, {"fid": cr["facility_id"]})
-                staff_rows = staff_res.mappings().all()
+        if cap_rows:
+            fids = tuple(set(cr["facility_id"] for cr in cap_rows))
 
-                missing_roles = []
-                seen = set()
-                for sr in staff_rows:
-                    if sr["role"] not in seen:
-                        seen.add(sr["role"])
-                        if sr["present"] == 0:
-                            missing_roles.append(sr["role"])
+            # Batch fetch staff
+            staff_q = text("""
+                SELECT facility_id, role, present, required, date
+                FROM staff_daily
+                WHERE facility_id = ANY(:fids)
+                ORDER BY facility_id, date DESC
+            """)
+            staff_res = await db.execute(staff_q, {"fids": list(fids)})
+            staff_map = {}
+            for r in staff_res.mappings().all():
+                fid = r["facility_id"]
+                if fid not in staff_map:
+                    staff_map[fid] = []
+                staff_map[fid].append(r)
+
+            # Batch fetch dispenses
+            dispense_q = text("""
+                SELECT facility_id, COUNT(*) as cnt
+                FROM transactions
+                WHERE type = 'dispense'
+                  AND occurred_at >= ((SELECT MAX(occurred_at) FROM transactions) - INTERVAL '1 day')
+                  AND facility_id = ANY(:fids)
+                GROUP BY facility_id
+            """)
+            dispense_res = await db.execute(dispense_q, {"fids": list(fids)})
+            dispense_map = {r["facility_id"]: r["cnt"] for r in dispense_res.mappings().all()}
+
+            # Batch fetch stock
+            stock_q = text("""
+                SELECT facility_id, COALESCE(SUM(quantity), 0) AS total_stock
+                FROM stock 
+                WHERE facility_id = ANY(:fids)
+                GROUP BY facility_id
+            """)
+            stock_res = await db.execute(stock_q, {"fids": list(fids)})
+            stock_map = {r["facility_id"]: r["total_stock"] for r in stock_res.mappings().all()}
+
+            for cr in cap_rows:
+                fid = cr["facility_id"]
                 
-                # Re-apply inference rule for risk driver string
-                dispense_check = text("""
-                    SELECT COUNT(*)
-                    FROM transactions
-                    WHERE facility_id = :fid
-                      AND type = 'dispense'
-                      AND occurred_at >= ((SELECT MAX(occurred_at) FROM transactions) - INTERVAL '1 day')
-                """)
-                disp_res = await db.execute(dispense_check, {"fid": cr["facility_id"]})
-                if disp_res.scalar() == 0 and "pharmacist" not in missing_roles:
-                    missing_roles.append("pharmacist")
+                # Check staff bottleneck
+                if cr["staff_score"] <= 0.5 or cr["bottleneck"] == "staff":
+                    staff_rows = staff_map.get(fid, [])
+                    missing_roles = []
+                    seen = set()
+                    for sr in staff_rows:
+                        if sr["role"] not in seen:
+                            seen.add(sr["role"])
+                            if sr["present"] == 0:
+                                missing_roles.append(sr["role"])
+                    
+                    disp_count = dispense_map.get(fid, 0)
+                    if disp_count == 0 and "pharmacist" not in missing_roles:
+                        missing_roles.append("pharmacist")
 
-                # Get total stock value (approximate)
-                stock_q = text("""
-                    SELECT COALESCE(SUM(quantity), 0) AS total_stock
-                    FROM stock WHERE facility_id = :fid
-                """)
-                stock_res = await db.execute(stock_q, {"fid": cr["facility_id"]})
-                total_stock = stock_res.scalar() or 0
+                    total_stock = stock_map.get(fid, 0)
 
-                if "pharmacist" in missing_roles:
-                    driver = f"no pharmacist — {total_stock:,} units stock undispensable"
-                else:
-                    driver = f"missing: {', '.join(missing_roles)}"
+                    if "pharmacist" in missing_roles:
+                        driver = f"no pharmacist — {total_stock:,} units stock undispensable"
+                    else:
+                        driver = f"missing: {', '.join(missing_roles)}" if missing_roles else "staffing critical"
 
-                items.insert(0, RiskItem(
-                    facility_id=cr["facility_id"],
-                    facility_name=cr["facility_name"],
-                    drug_id=None,
-                    drug_name=None,
-                    days_to_stockout=0,
-                    confidence=1.0,
-                    driver=driver,
-                    bottleneck="staff",
-                    status="critical",
-                ))
-                
-            # Check beds bottleneck
-            if cr["bed_score"] <= 0.5 or cr["bottleneck"] == "beds":
-                driver = f"bed occupancy critical — score {round(cr['bed_score'] * 100)}%"
-                items.insert(0, RiskItem(
-                    facility_id=cr["facility_id"],
-                    facility_name=cr["facility_name"],
-                    drug_id=None,
-                    drug_name=None,
-                    days_to_stockout=0,
-                    confidence=1.0,
-                    driver=driver,
-                    bottleneck="beds",
-                    status="critical",
-                ))
-    except Exception:
-        pass  # Capacity data is best-effort; don't break risk queue
+                    items.insert(0, RiskItem(
+                        facility_id=fid,
+                        facility_name=cr["facility_name"],
+                        drug_id=None,
+                        drug_name=None,
+                        days_to_stockout=0,
+                        confidence=1.0,
+                        driver=driver,
+                        bottleneck="staff",
+                        status="critical",
+                    ))
+                    
+                # Check beds bottleneck
+                if cr["bed_score"] <= 0.5 or cr["bottleneck"] == "beds":
+                    driver = f"bed occupancy critical — score {round(cr['bed_score'] * 100)}%"
+                    items.insert(0, RiskItem(
+                        facility_id=fid,
+                        facility_name=cr["facility_name"],
+                        drug_id=None,
+                        drug_name=None,
+                        days_to_stockout=0,
+                        confidence=1.0,
+                        driver=driver,
+                        bottleneck="beds",
+                        status="critical",
+                    ))
+                    
+    except Exception as e:
+        print(f"Capacity risk queue error: {e}")
+        
+    return RiskListResponse(
+        items=items,
+        total=total + len(items)
+    )
 
-    return RiskListResponse(items=items, total=total + len([i for i in items if i.bottleneck != "medicine"]))
 
 
 # ---------------------------------------------------------------------------
@@ -1057,19 +1081,20 @@ async def fire_scenario(
         from datetime import date as date_type, datetime as dt_type, timedelta
         import datetime as dt_module
         
-        # Get all affected facility-drug pairs
-        pairs_query = text(f"""
-            SELECT DISTINCT s.facility_id, s.drug_id, d.category,
-                   f.district AS fac_district
+        # Get all stock values upfront
+        stock_query = text(f"""
+            SELECT s.facility_id, s.drug_id, SUM(s.quantity) AS current_stock,
+                   d.category, f.district AS fac_district
             FROM stock s
             JOIN drugs d ON d.id = s.drug_id
             JOIN facilities f ON f.id = s.facility_id
             WHERE f.district = CAST(:district AS text)
               AND d.category IN ({placeholders})
               AND s.quantity > 0
+            GROUP BY s.facility_id, s.drug_id, d.category, f.district
         """)
-        pairs_result = await db.execute(pairs_query, {"district": district})
-        pairs = pairs_result.mappings().all()
+        stock_result = await db.execute(stock_query, {"district": district})
+        pairs = stock_result.mappings().all()
         
         # Fetch shared data once
         sf_query = text("SELECT drug_category, month, factor FROM season_factor")
@@ -1086,30 +1111,40 @@ async def fire_scenario(
         
         current_month = dt_module.date.today().month
         
+        # Get all dispense history in one query
+        hist_q = text(f"""
+            SELECT t.facility_id, t.drug_id, DATE(t.occurred_at) AS date, SUM(t.quantity) AS quantity
+            FROM transactions t
+            JOIN facilities f ON f.id = t.facility_id
+            JOIN drugs d ON d.id = t.drug_id
+            WHERE f.district = CAST(:district AS text)
+              AND d.category IN ({placeholders})
+              AND t.type = 'dispense'
+              AND t.occurred_at >= (
+                  (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '180 days'
+              )
+            GROUP BY t.facility_id, t.drug_id, DATE(t.occurred_at)
+            ORDER BY DATE(t.occurred_at) ASC
+        """)
+        hist_result = await db.execute(hist_q, {"district": district})
+        
+        from collections import defaultdict
+        history_map = defaultdict(list)
+        for row in hist_result.mappings().all():
+            history_map[(row["facility_id"], row["drug_id"])].append(row)
+            
+        upsert_params = []
+        
         for pair in pairs:
             fid = pair["facility_id"]
             did = pair["drug_id"]
             cat = pair["category"]
+            stock_val = pair["current_stock"]
             
-            # Get dispensing history
-            hist_q = text("""
-                SELECT DATE(t.occurred_at) AS date, SUM(t.quantity) AS quantity
-                FROM transactions t
-                WHERE t.facility_id = CAST(:fid AS integer) AND t.drug_id = CAST(:did AS integer)
-                  AND t.type = 'dispense'
-                  AND t.occurred_at >= (
-                      (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '180 days'
-                  )
-                GROUP BY DATE(t.occurred_at)
-                ORDER BY DATE(t.occurred_at) ASC
-            """)
-            hist_result = await db.execute(hist_q, {"fid": fid, "did": did})
-            hist_rows = hist_result.mappings().all()
-            
+            hist_rows = history_map.get((fid, did), [])
             if not hist_rows:
                 continue
             
-            # Build daily series
             all_dates = [row["date"] for row in hist_rows]
             min_date = min(all_dates)
             max_date = max(all_dates)
@@ -1121,11 +1156,6 @@ async def fire_scenario(
                 daily_series.append({"date": current.isoformat(), "quantity": date_qty_map.get(current, 0)})
                 current += timedelta(days=1)
             
-            # Get stock
-            stock_q = text("SELECT COALESCE(SUM(quantity), 0) FROM stock WHERE facility_id = CAST(:fid AS integer) AND drug_id = CAST(:did AS integer)")
-            stock_val = (await db.execute(stock_q, {"fid": fid, "did": did})).scalar() or 0
-            
-            # Compute forecast
             fc_result = forecast_facility_drug(
                 daily_dispensing=daily_series,
                 current_stock=int(stock_val),
@@ -1137,7 +1167,16 @@ async def fire_scenario(
                 lead_time_days=7,
             )
             
-            # Upsert into forecasts table
+            upsert_params.append({
+                "fid": fid, "did": did,
+                "rate": fc_result["predicted_daily_rate"],
+                "dts": fc_result["days_to_stockout"],
+                "conf": fc_result["confidence"],
+                "driver": fc_result["driver"],
+                "method": fc_result["method_used"],
+            })
+            
+        if upsert_params:
             upsert_q = text("""
                 INSERT INTO forecasts (facility_id, drug_id, predicted_daily_rate,
                     days_to_stockout, confidence, driver_label, method_used)
@@ -1150,14 +1189,7 @@ async def fire_scenario(
                     method_used = EXCLUDED.method_used
             """)
             try:
-                await db.execute(upsert_q, {
-                    "fid": fid, "did": did,
-                    "rate": fc_result["predicted_daily_rate"],
-                    "dts": fc_result["days_to_stockout"],
-                    "conf": fc_result["confidence"],
-                    "driver": fc_result["driver"],
-                    "method": fc_result["method_used"],
-                })
+                await db.execute(upsert_q, upsert_params)
             except Exception as e:
                 print(f"UPSERT ERROR: {e}")
     
@@ -2132,3 +2164,58 @@ async def staff_checkin(
         present=row["present"],
         required=row["required"],
     )
+
+
+# ===========================================================================
+# PHASE 6 — Federation
+# ===========================================================================
+
+from schemas import (
+    FlRoundResponse,
+    FlClientResponse,
+    FederationStatusResponse,
+)
+
+@router.get("/federation/status", response_model=FederationStatusResponse)
+async def get_federation_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of federated training rounds and clients.
+    """
+    rounds_q = text("""
+        SELECT * FROM fl_rounds ORDER BY round_no ASC
+    """)
+    clients_q = text("""
+        SELECT * FROM fl_clients ORDER BY state_name ASC
+    """)
+    
+    rounds_res = await db.execute(rounds_q)
+    clients_res = await db.execute(clients_q)
+    
+    rounds = []
+    for r in rounds_res.mappings().all():
+        rounds.append(FlRoundResponse(**r))
+        
+    clients = []
+    for c in clients_res.mappings().all():
+        clients.append(FlClientResponse(**c))
+        
+    return FederationStatusResponse(rounds=rounds, clients=clients)
+
+import subprocess
+
+@router.post("/demo/federation/run")
+async def run_federation_simulation(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Triggers the offline simulation script to populate FL tables for demo purposes.
+    """
+    script_path = os.path.join(os.path.dirname(__file__), "..", "..", "ml", "federated", "simulation.py")
+    try:
+        # Run sync since it's a demo trigger
+        subprocess.run([sys.executable, script_path], check=True, capture_output=True)
+        return {"status": "success", "message": "Federated simulation completed."}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {e.stderr.decode()}")

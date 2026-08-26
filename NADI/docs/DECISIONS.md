@@ -170,6 +170,13 @@ workflow: generate then seed.
 **Rejected:** Accordion rows or inline editing. A modal provides a focused, native-app-like experience for text entry and datalist selection on mobile screens.
 **Consequence:** State management for `editingRowIndex` added to `ScanTab`.
 
+## ADR-021 — FedProx over FedAvg for simulated state clients
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-i | **Status:** accepted
+**Context:** The 5 state clients in Phase 6 have deliberately non-IID data distributions (e.g., varying disease prevalence).
+**Decision:** Use the FedProx strategy for the Federated Learning simulation.
+**Rejected:** Plain FedAvg. With genuinely non-IID clients, plain averaging degrades global model performance because local updates drift too far apart. FedProx adds a proximal term to constrain local updates, ensuring stable convergence.
+**Consequence:** Proves a deeper understanding of real-world federated learning challenges in the hackathon presentation.
+
 ## ADR-019 — Compute capacity scores dynamically on read
 **Date:** 2026-08-26 | **Session:** session-2026-08-26-g | **Status:** accepted
 **Context:** Phase 5 requires computing a Capacity Bottleneck Index (CBI) which is the minimum of medicine, bed, and staff scores.

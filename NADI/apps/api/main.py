@@ -29,11 +29,20 @@ async def lifespan(app: FastAPI):
 
     # Check if DB needs seeding
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import select, func
+        from sqlalchemy import select, func, text
         result = await session.execute(select(func.count()).select_from(Facility))
         count = result.scalar()
         if count == 0:
             print("DB is empty — run 'python data/seed.py --reset' to seed.")
+        else:
+            # Phase 2: Compute baseline forecasts if table is empty
+            # This ensures the dashboard map and stats load by default without needing to click a demo button
+            fc_res = await session.execute(text("SELECT COUNT(*) FROM forecasts"))
+            if fc_res.scalar() == 0:
+                print("Computing baseline forecasts for default dashboard view...")
+                from routes import compute_all_forecasts
+                await compute_all_forecasts(session)
+                print("Baseline forecasts computed.")
 
     yield
 
