@@ -7,8 +7,8 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 3 — Optimiser
-**Status:** Phase 3 complete. Backend min-cost flow engine, plan API, transfer approval workflow, and frontend Transfer Planner route with interactive map and impact panel are fully functional.
+**Phase:** 4 - PHC app
+**Status:** Phase 4 starting. Phase 3 (Optimiser / Transfer Planner) is fully complete, including the missing database constraints for `forecasts` table which were causing 500 errors in the outbreak scenario.
 **Last updated:** 2026-08-26 by session-2026-08-26-a
 
 **Works right now:**
@@ -29,7 +29,7 @@ session. Append to the log. Never let this drift from reality.
 - None.
 
 **Next task, precisely:**
-1. Start Phase 4 (Mobile/Field Interface) or finalize remaining polish on Phase 3 (animations, transitions).
+1. Start Phase 4 (PHC app) which involves building the offline PWA, camera ingestion, and Gemini-based register parsing.
 
 ---
 
