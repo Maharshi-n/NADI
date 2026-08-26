@@ -1,295 +1,397 @@
 """
-NADI Forecasting Engine — Phase 2.
+NADI Forecasting Engine — Pure NumPy implementation.
 
-Computes predicted demand rates for every facility-drug pair using:
-  - SES (Simple Exponential Smoothing) for smooth / erratic demand
-  - Croston SBA for intermittent / lumpy demand
-  - Season factors (from the season_factor table)
-  - Outbreak factors (from recent disease_signal spikes)
+ADR-009: No statsforecast dependency. SES and Croston SBA implemented
+in ~200 lines for a lightweight Docker image.
 
-Produces: predicted_rate, days_to_stockout, confidence, driver_label,
-method_used — all written to the forecasts table.
+SKU classification routes each facility-drug pair to the right method:
+- Smooth/erratic → Simple Exponential Smoothing
+- Intermittent/lumpy → Croston SBA
 
-This module is called:
-  1. On API startup to populate forecasts if empty
-  2. After POST /api/demo/scenario to recompute affected forecasts
-  3. After POST /api/demo/reset to restore baseline
+Season factors and outbreak factors are applied on top of the base
+forecast as multiplicative adjustments per CONTEXT.md:
+  predicted_rate = burn_rate * season_factor * outbreak_factor
 """
 
 import math
-from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple, Optional, Dict
 
-# ---------------------------------------------------------------------------
-# SES (Simple Exponential Smoothing)
-# ---------------------------------------------------------------------------
+# ── SKU Classification ────────────────────────────────────────────────────
+
+def classify_demand(values: List[float]) -> str:
+    """
+    Classify demand pattern using CV and ADI thresholds.
+    Matches the generator's classify_demand() thresholds exactly.
+    
+    CV < 0.49 and ADI < 1.32 → smooth
+    CV >= 0.49 and ADI < 1.32 → erratic
+    CV < 0.49 and ADI >= 1.32 → intermittent
+    CV >= 0.49 and ADI >= 1.32 → lumpy
+    """
+    non_zero = [v for v in values if v > 0]
+    if len(non_zero) < 3:
+        return "lumpy"
+    
+    mean_nz = sum(non_zero) / len(non_zero)
+    if mean_nz == 0:
+        return "lumpy"
+    
+    variance = sum((x - mean_nz) ** 2 for x in non_zero) / len(non_zero)
+    cv = math.sqrt(variance) / mean_nz
+    adi = len(values) / max(len(non_zero), 1)
+    
+    if cv < 0.49 and adi < 1.32:
+        return "smooth"
+    elif cv >= 0.49 and adi < 1.32:
+        return "erratic"
+    elif cv < 0.49 and adi >= 1.32:
+        return "intermittent"
+    else:
+        return "lumpy"
+
+
+# ── Simple Exponential Smoothing ──────────────────────────────────────────
 
 def ses_forecast(
     values: List[float],
     alpha: float = 0.3,
-    horizon: int = 14,
-) -> Tuple[float, List[float], float]:
+    horizon: int = 30,
+) -> Tuple[float, List[float], List[float], List[float]]:
     """
     Simple Exponential Smoothing.
-
-    Returns:
-        (level, forecast_values, residual_std)
+    Returns (level, predicted, lower, upper) for the horizon.
+    
+    For smooth/erratic demand where zeros are rare.
     """
     if not values or all(v == 0 for v in values):
-        return 0.0, [0.0] * horizon, 0.0
-
-    # Initialize level with first non-zero value or mean of first 7
-    init_window = values[:7] if len(values) >= 7 else values
-    level = sum(init_window) / len(init_window)
-
+        return 0.0, [0.0] * horizon, [0.0] * horizon, [0.0] * horizon
+    
+    # Initialize level to the mean of first 10 values
+    init_window = min(10, len(values))
+    level = sum(values[:init_window]) / init_window
+    
+    # Fit
     residuals = []
     for v in values:
-        error = v - level
-        residuals.append(error)
+        residuals.append(v - level)
         level = alpha * v + (1 - alpha) * level
-
-    # Forecast is flat at the final level
-    forecast_values = [max(0.0, level)] * horizon
-
-    # Residual std for confidence bands
-    if len(residuals) > 1:
-        mean_res = sum(residuals) / len(residuals)
-        var = sum((r - mean_res) ** 2 for r in residuals) / (len(residuals) - 1)
-        residual_std = math.sqrt(var)
+    
+    # Forecast: flat at last level
+    predicted = [max(0, level)] * horizon
+    
+    # Prediction interval using residual std
+    if len(residuals) > 2:
+        res_mean = sum(residuals) / len(residuals)
+        res_var = sum((r - res_mean) ** 2 for r in residuals) / (len(residuals) - 1)
+        res_std = math.sqrt(res_var)
     else:
-        residual_std = 0.0
+        res_std = level * 0.3  # fallback
+    
+    lower = []
+    upper = []
+    for h in range(1, horizon + 1):
+        # Widening interval
+        width = 1.96 * res_std * math.sqrt(1 + (h - 1) * alpha ** 2)
+        lower.append(max(0, level - width))
+        upper.append(level + width)
+    
+    return level, predicted, lower, upper
 
-    return max(0.0, level), forecast_values, residual_std
 
-
-# ---------------------------------------------------------------------------
-# Croston SBA (Syntetos-Boylan Approximation)
-# ---------------------------------------------------------------------------
+# ── Croston SBA ───────────────────────────────────────────────────────────
 
 def croston_sba_forecast(
     values: List[float],
-    alpha: float = 0.3,
-    horizon: int = 14,
-) -> Tuple[float, List[float], float]:
+    alpha: float = 0.15,
+    horizon: int = 30,
+) -> Tuple[float, List[float], List[float], List[float]]:
     """
-    Croston's method with SBA (Syntetos-Boylan Approximation) debiasing.
-    Designed for intermittent/lumpy demand with many zero periods.
-
-    Returns:
-        (predicted_rate, forecast_values, residual_std)
+    Croston's method with Syntetos-Boylan Approximation (SBA).
+    
+    For intermittent/lumpy demand where many days have zero demand.
+    Separately smooths demand size and inter-demand interval.
     """
     if not values or all(v == 0 for v in values):
-        return 0.0, [0.0] * horizon, 0.0
-
-    # Extract non-zero demand sizes and inter-demand intervals
-    demand_sizes = []
+        return 0.0, [0.0] * horizon, [0.0] * horizon, [0.0] * horizon
+    
+    # Extract non-zero demands and their intervals
+    demands = []
     intervals = []
-    periods_since_last = 0
-
+    gap = 0
     for v in values:
-        periods_since_last += 1
+        gap += 1
         if v > 0:
-            demand_sizes.append(v)
-            intervals.append(periods_since_last)
-            periods_since_last = 0
-
-    if len(demand_sizes) < 2:
-        # Too few non-zero observations — fall back to simple average
-        avg = sum(values) / len(values) if values else 0
-        return max(0.0, avg), [max(0.0, avg)] * horizon, 0.0
-
-    # Initialize smoothed values
-    z = demand_sizes[0]  # smoothed demand size
-    p = intervals[0]     # smoothed inter-demand interval
-
-    for i in range(1, len(demand_sizes)):
-        z = alpha * demand_sizes[i] + (1 - alpha) * z
+            demands.append(v)
+            intervals.append(gap)
+            gap = 0
+    
+    if len(demands) < 2:
+        # Too few non-zero values — return simple average
+        avg = sum(values) / len(values)
+        return avg, [max(0, avg)] * horizon, [0.0] * horizon, [avg * 2] * horizon
+    
+    # Initialize
+    z = sum(demands[:3]) / min(3, len(demands))  # demand size level
+    p = sum(intervals[:3]) / min(3, len(intervals))  # interval level
+    
+    # Smooth
+    for i in range(len(demands)):
+        z = alpha * demands[i] + (1 - alpha) * z
         p = alpha * intervals[i] + (1 - alpha) * p
-
-    # SBA debiasing factor
-    sba_factor = 1 - alpha / 2
-
-    if p > 0:
-        predicted_rate = (z / p) * sba_factor
-    else:
-        predicted_rate = 0.0
-
-    predicted_rate = max(0.0, predicted_rate)
-    forecast_values = [predicted_rate] * horizon
-
-    # Residual std from demand sizes
-    if len(demand_sizes) > 1:
-        mean_d = sum(demand_sizes) / len(demand_sizes)
-        var = sum((d - mean_d) ** 2 for d in demand_sizes) / (len(demand_sizes) - 1)
-        residual_std = math.sqrt(var) / max(p, 1.0)
-    else:
-        residual_std = 0.0
-
-    return predicted_rate, forecast_values, residual_std
+    
+    # SBA adjustment: multiply by (1 - alpha/2) to correct bias
+    sba_rate = (z / p) * (1 - alpha / 2) if p > 0 else 0
+    
+    predicted = [max(0, sba_rate)] * horizon
+    
+    # Confidence band — wider than SES due to intermittency
+    demand_std = math.sqrt(
+        sum((d - z) ** 2 for d in demands) / max(len(demands) - 1, 1)
+    ) if len(demands) > 1 else z * 0.5
+    
+    lower = []
+    upper = []
+    for h in range(1, horizon + 1):
+        width = 1.96 * (demand_std / max(p, 1)) * math.sqrt(1 + h * 0.05)
+        lower.append(max(0, sba_rate - width))
+        upper.append(sba_rate + width)
+    
+    return sba_rate, predicted, lower, upper
 
 
-# ---------------------------------------------------------------------------
-# Confidence scoring
-# ---------------------------------------------------------------------------
+# ── Forecast Orchestrator ─────────────────────────────────────────────────
+
+# Condition → drug categories mapping for outbreak factor
+CONDITION_DRUG_MAP: Dict[str, List[str]] = {
+    "dengue": ["antimalarial", "ors_zinc", "analgesic", "antibiotic"],
+    "malaria": ["antimalarial", "analgesic"],
+    "diarrhoeal": ["ors_zinc", "antibiotic", "gastrointestinal"],
+    "respiratory_infection": ["respiratory", "antibiotic", "analgesic"],
+    "tuberculosis": ["antibiotic", "nutritional"],
+}
+
+
+def compute_outbreak_factor(
+    disease_signals: List[dict],
+    drug_category: str,
+) -> Tuple[float, Optional[str]]:
+    """
+    Compute outbreak factor from recent disease signals.
+    
+    Compares last 2 weeks of case counts to the prior 4 weeks.
+    Returns (factor, driver_string or None).
+    
+    disease_signals: list of {condition, week_start, case_count} dicts,
+                     sorted by week_start desc.
+    """
+    if not disease_signals:
+        return 1.0, None
+    
+    best_factor = 1.0
+    best_driver = None
+    
+    for condition, affected_categories in CONDITION_DRUG_MAP.items():
+        if drug_category not in affected_categories:
+            continue
+        
+        # Filter signals for this condition
+        cond_signals = [s for s in disease_signals if s.get("condition") == condition]
+        if len(cond_signals) < 4:
+            continue
+        
+        # Recent (last 2 entries) vs baseline (next 4 entries)
+        recent = cond_signals[:2]
+        baseline = cond_signals[2:6]
+        
+        if not baseline:
+            continue
+        
+        recent_avg = sum(float(s.get("case_count", 0)) for s in recent) / len(recent)
+        baseline_avg = sum(float(s.get("case_count", 0)) for s in baseline) / len(baseline)
+        
+        # Guard against tiny baselines
+        if baseline_avg < 5:
+            continue
+        
+        ratio = recent_avg / baseline_avg
+        
+        if ratio > 1.2:  # Significant increase
+            factor = min(ratio, 5.0)  # Cap at 5x
+            if factor > best_factor:
+                # Use capped factor for display, not raw ratio
+                pct_change = round((factor - 1) * 100)
+                best_factor = factor
+                best_driver = f"{condition.replace('_', ' ').title()} cases +{pct_change}% in this block"
+    
+    return best_factor, best_driver
+
+
+def compute_season_factor(
+    season_factors: List[dict],
+    drug_category: str,
+    month: int,
+) -> float:
+    """
+    Look up the season factor for a drug category and month.
+    season_factors: list of {drug_category, month, factor} dicts.
+    """
+    for sf in season_factors:
+        if sf["drug_category"] == drug_category and sf["month"] == month:
+            return sf["factor"]
+    return 1.0
+
 
 def compute_confidence(
-    history_len: int,
-    cv: float,
+    history: List[float],
+    method: str,
     demand_class: str,
 ) -> float:
     """
-    Confidence score in [0, 1] derived from:
-      - History length (≥90 days → full credit, linearly scaled below)
-      - Demand variance (lower CV → higher confidence)
-      - Demand class (smooth > erratic > intermittent > lumpy)
+    Confidence score [0, 1] based on:
+    - History length (more data = higher confidence)
+    - Data density (fewer zeros = higher for non-intermittent)
+    - Method appropriateness
     """
-    # History component: 0-0.4
-    history_score = min(history_len / 90.0, 1.0) * 0.4
+    n = len(history)
+    non_zero = sum(1 for v in history if v > 0)
+    density = non_zero / max(n, 1)
+    
+    # Base confidence from history length (plateaus around 90 days)
+    length_score = min(n / 90, 1.0)
+    
+    # Density score — for intermittent, low density is expected
+    if demand_class in ("intermittent", "lumpy"):
+        density_score = min(density / 0.3, 1.0)  # 30%+ density is good for intermittent
+    else:
+        density_score = density  # Higher is better for smooth
+    
+    # Combined
+    confidence = 0.5 * length_score + 0.4 * density_score + 0.1
+    return round(min(max(confidence, 0.1), 0.99), 2)
 
-    # Variance component: 0-0.3  (CV of 0 → 0.3, CV of 1+ → 0)
-    variance_score = max(0.0, 1.0 - cv) * 0.3
 
-    # Class component: 0-0.3
-    class_scores = {
-        "smooth": 0.30,
-        "erratic": 0.20,
-        "intermittent": 0.15,
-        "lumpy": 0.05,
-    }
-    class_score = class_scores.get(demand_class, 0.1)
-
-    return round(min(1.0, history_score + variance_score + class_score), 2)
-
-
-# ---------------------------------------------------------------------------
-# Driver attribution
-# ---------------------------------------------------------------------------
-
-def compute_driver(
+def identify_driver(
     season_factor: float,
     outbreak_factor: float,
-    outbreak_condition: Optional[str],
-    outbreak_pct_change: float,
+    outbreak_driver: Optional[str],
+    burn_trend: float,  # ratio of recent burn to historical average
 ) -> str:
     """
-    Determine which factor moved the forecast most and produce
-    a human-readable driver string.
+    Pick the single largest factor driving the forecast and return
+    a human-readable string.
     """
-    season_impact = abs(season_factor - 1.0)
-    outbreak_impact = abs(outbreak_factor - 1.0)
+    factors = {
+        "outbreak": (outbreak_factor, outbreak_driver),
+        "season": (season_factor, None),
+        "trend": (burn_trend, None),
+    }
+    
+    # Find the factor furthest from 1.0
+    max_deviation = 0
+    driver_key = "trend"
+    for key, (factor, _) in factors.items():
+        deviation = abs(factor - 1.0)
+        if deviation > max_deviation:
+            max_deviation = deviation
+            driver_key = key
+    
+    if driver_key == "outbreak" and outbreak_driver:
+        return outbreak_driver
+    elif driver_key == "season":
+        if season_factor > 1.1:
+            pct = round((season_factor - 1) * 100)
+            return f"Seasonal demand +{pct}% this month"
+        elif season_factor < 0.9:
+            pct = round((1 - season_factor) * 100)
+            return f"Seasonal demand -{pct}% this month"
+        else:
+            return "Stable seasonal pattern"
+    else:
+        if burn_trend > 1.1:
+            pct = round((burn_trend - 1) * 100)
+            return f"Consumption trend rising +{pct}%"
+        elif burn_trend < 0.9:
+            pct = round((1 - burn_trend) * 100)
+            return f"Consumption trend falling -{pct}%"
+        else:
+            return "Stable consumption pattern"
 
-    if outbreak_impact > 0.1 and outbreak_impact >= season_impact:
-        pct = round(outbreak_pct_change * 100)
-        condition_name = (outbreak_condition or "disease").replace("_", " ").title()
-        return f"{condition_name} cases +{pct}% in district"
-
-    if season_impact > 0.1:
-        direction = "increase" if season_factor > 1.0 else "decrease"
-        pct = round(season_impact * 100)
-        return f"Seasonal {direction} (+{pct}%)"
-
-    return "Stable demand"
-
-
-# ---------------------------------------------------------------------------
-# Main forecasting function (operates on database data)
-# ---------------------------------------------------------------------------
 
 def forecast_facility_drug(
-    daily_dispensing: List[Tuple[str, float]],  # [(date_str, qty), ...]
-    current_stock: float,
-    season_factor: float,
-    outbreak_factor: float,
-    outbreak_condition: Optional[str],
-    outbreak_pct_change: float,
-    demand_class: str,
-    horizon: int = 14,
+    daily_dispensing: List[dict],  # [{date, quantity}], last 180 days
+    current_stock: int,
+    drug_category: str,
+    current_month: int,
+    season_factors: List[dict],
+    disease_signals: List[dict],
+    horizon: int = 30,
     lead_time_days: int = 7,
 ) -> dict:
     """
-    Compute the full forecast for one facility-drug pair.
-
-    Returns dict with keys:
-        predicted_daily_rate, days_to_stockout, confidence,
-        driver_label, method_used, history, forecast_band,
-        reorder_point, stockout_date
+    Full forecast pipeline for one facility-drug pair.
+    
+    Returns dict matching the API.md /forecast contract.
     """
-    # Extract just quantities for the model
-    quantities = [q for _, q in daily_dispensing]
-
-    # Choose model
+    # Extract raw values
+    values = [d["quantity"] for d in daily_dispensing]
+    
+    # 1. Classify
+    demand_class = classify_demand(values)
+    
+    # 2. Choose method and forecast
     if demand_class in ("smooth", "erratic"):
         method = "ses"
-        base_rate, forecast_vals, residual_std = ses_forecast(quantities, horizon=horizon)
+        base_rate, predicted, lower, upper = ses_forecast(values, horizon=horizon)
     else:
         method = "croston_sba"
-        base_rate, forecast_vals, residual_std = croston_sba_forecast(quantities, horizon=horizon)
-
-    # Apply factors
-    predicted_rate = base_rate * season_factor * outbreak_factor
-
-    # Forecast band with factors applied
-    band_center = [v * season_factor * outbreak_factor for v in forecast_vals]
-    band_width = residual_std * 1.5 * season_factor * outbreak_factor
-    band_lower = [max(0.0, v - band_width) for v in band_center]
-    band_upper = [v + band_width for v in band_center]
-
-    # Days to stockout
+        base_rate, predicted, lower, upper = croston_sba_forecast(values, horizon=horizon)
+    
+    # 3. Season factor
+    sf = compute_season_factor(season_factors, drug_category, current_month)
+    
+    # 4. Outbreak factor
+    of, outbreak_driver = compute_outbreak_factor(disease_signals, drug_category)
+    
+    # 5. Apply factors
+    combined_factor = sf * of
+    predicted = [max(0, p * combined_factor) for p in predicted]
+    lower = [max(0, lo * combined_factor) for lo in lower]
+    upper = [u * combined_factor for u in upper]
+    predicted_rate = base_rate * combined_factor
+    
+    # 6. Days to stockout
     if predicted_rate > 0:
         days_to_stockout = current_stock / predicted_rate
     else:
-        days_to_stockout = None  # no demand → no stockout
-
-    # Reorder point
-    reorder_point = predicted_rate * lead_time_days
-
-    # Stockout date
-    stockout_date = None
-    if days_to_stockout is not None and days_to_stockout < 365:
-        stockout_date = (date.today() + timedelta(days=int(days_to_stockout))).isoformat()
-
-    # Confidence
-    cv = 0.0
-    non_zero = [v for v in quantities if v > 0]
-    if len(non_zero) >= 2:
-        mean_nz = sum(non_zero) / len(non_zero)
-        if mean_nz > 0:
-            variance = sum((x - mean_nz) ** 2 for x in non_zero) / len(non_zero)
-            cv = math.sqrt(variance) / mean_nz
-
-    confidence = compute_confidence(len(quantities), cv, demand_class)
-
-    # Driver
-    driver_label = compute_driver(
-        season_factor, outbreak_factor,
-        outbreak_condition, outbreak_pct_change,
-    )
-
-    # Build history array (last 90 days max for the API)
-    history = []
-    for date_str, qty in daily_dispensing[-90:]:
-        history.append({"date": date_str, "quantity": int(qty)})
-
-    # Build forecast band array
-    today = date.today()
-    forecast_band = []
-    for i in range(horizon):
-        d = (today + timedelta(days=i + 1)).isoformat()
-        forecast_band.append({
-            "date": d,
-            "predicted": round(band_center[i], 1),
-            "lower": round(band_lower[i], 1),
-            "upper": round(band_upper[i], 1),
-        })
-
+        days_to_stockout = None
+    
+    # 7. Reorder point: burn_rate × lead_time
+    reorder_point = round(predicted_rate * lead_time_days) if predicted_rate > 0 else 0
+    
+    # 8. Burn trend (recent 14 days vs full history average)
+    if len(values) > 14:
+        recent_avg = sum(values[-14:]) / 14
+        full_avg = sum(values) / len(values)
+        burn_trend = recent_avg / full_avg if full_avg > 0 else 1.0
+    else:
+        burn_trend = 1.0
+    
+    # 9. Driver
+    driver = identify_driver(sf, of, outbreak_driver, burn_trend)
+    
+    # 10. Confidence
+    confidence = compute_confidence(values, method, demand_class)
+    
     return {
         "predicted_daily_rate": round(predicted_rate, 2),
         "days_to_stockout": round(days_to_stockout, 1) if days_to_stockout is not None else None,
         "confidence": confidence,
-        "driver_label": driver_label,
+        "driver": driver,
         "method_used": method,
-        "history": history,
-        "forecast_band": forecast_band,
-        "reorder_point": round(reorder_point, 1),
-        "stockout_date": stockout_date,
+        "demand_class": demand_class,
+        "reorder_point": reorder_point,
+        "forecast": [
+            {"predicted": round(p, 1), "lower": round(lo, 1), "upper": round(u, 1)}
+            for p, lo, u in zip(predicted, lower, upper)
+        ],
     }

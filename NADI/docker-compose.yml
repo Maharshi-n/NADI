@@ -17,16 +17,18 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: ./apps/api/Dockerfile
+      context: ./apps/api
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
     environment:
       DATABASE_URL: postgresql+asyncpg://nadi:nadi@db:5432/nadi
       DATABASE_URL_SYNC: postgresql://nadi:nadi@db:5432/nadi
       ENVIRONMENT: development
+    volumes:
+      - ./ml:/ml
+      - ./data:/data
+      - ./apps/api:/app
     depends_on:
       db:
         condition: service_healthy

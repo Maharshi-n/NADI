@@ -57,7 +57,7 @@ export function MapView({ facilities, selectedFacilityId, onSelectFacility }: Ma
       zoom: DHAR_ZOOM,
     });
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-left');
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
     mapRef.current = map;
 

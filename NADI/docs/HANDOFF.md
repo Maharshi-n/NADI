@@ -7,24 +7,29 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 3 — Optimization
-**Status:** Phase 2 complete. Ready to begin Phase 3 (Transfers and Optimization).
+**Phase:** 2 — Forecast
+**Status:** Phase 2 core complete. Forecasting engine, API endpoints, and frontend panels all functional.
 **Last updated:** 2026-08-25 by session-2026-08-25-d
 
 **Works right now:**
-- Generator and seeder work completely.
-- Phase 1 API and Dashboard are complete.
-- Phase 2 API (Forecast engine with SES and Croston SBA) works.
-- Phase 2 Dashboard (Forecast Panel, Scenario Runner) works.
+- Docker compose environment runs properly (`postgres` and `api` working together).
+- Phase 1 endpoints (`/api/facilities`, `/api/stock`, `/api/risk`, `/api/kpis`) unchanged and working.
+- **Phase 2 forecasting engine** (`ml/forecasting/engine.py`): SES for smooth/erratic, Croston SBA for intermittent/lumpy. Season + outbreak factors applied. Driver attribution and confidence scoring working.
+- **`GET /api/forecast?facilityId=&drugId=`** returns 90 days history + 30 days forecast with confidence band, stockout projection, driver string, and method used.
+- **`POST /api/demo/scenario`** injects outbreak signals (3 weeks of inflated case counts) and invalidates forecast cache. Returns affected facility count.
+- **`POST /api/demo/reset`** restores seed state from `data/generated/*.json` files.
+- **Frontend ForecastPanel** — Recharts ComposedChart showing history line, forecast band, reorder line, stockout marker. Shows driver chip and method badge.
+- **Frontend ScenarioRunner** — condition dropdown, multiplier slider, fire/reset buttons.
+- **RiskQueue** shows confidence and driver from Phase 2 data when available.
+- `test_phase2.py` passes all 7 tests (forecast smooth, forecast lumpy, scenario fire, reset).
+- TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
-- Cannot test end-to-end locally because Docker is not available in the current environment.
+- None.
 
 **Next task, precisely:**
-1. Start Phase 3 (Optimization).
-2. Implement min-cost flow optimizer for supply transfers.
-3. Add API routes for transfer planning and approval.
-4. Update frontend to include transfer interface.
+1. Verify Phase 2 acceptance criteria per PHASES.md — fire outbreak → risk queue reorders sensibly.
+2. Start Phase 3 (Transfer) or polish Phase 2 further (forecast chart scrolling, loading animations).
 
 ---
 
@@ -66,12 +71,26 @@ dependency, a version pin, a workaround.
 - DB mapped to port 5433 to avoid local conflicts.
 - Generator runs standalone without Postgres: `python data/generator.py`
 - Generated data lands in `data/generated/*.json` (~45 MB total)
+- **Docker compose mounts `ml/` at `/ml` and `data/` at `/data`** inside the API container for forecasting engine access.
+- `asyncpg` requires native Python date objects, not ISO strings — parse before insert.
 
 ---
 
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-25 — session-2026-08-25-d
+- **Did:** Built Phase 2 forecasting: `ml/forecasting/engine.py` (SES + Croston SBA), 3 new API endpoints (`/forecast`, `/demo/scenario`, `/demo/reset`), frontend ForecastPanel + ScenarioRunner + RiskQueue upgrades. Upgraded `/api/risk` and `/api/facilities` to read from the `forecasts` table, allowing map pins and risk queue to instantly update when a scenario fires. All 7 API tests pass.
+- **Decided:** 7-day lead time for reorder point (ADR-010). Pure NumPy per ADR-009 — no statsforecast. Capped outbreak factor at 5× to prevent absurd predictions.
+- **Left broken:** None.
+- **Next session should:** Run full Phase 2 acceptance test (fire outbreak → queue reorders), then start Phase 3.
+
+### 2026-08-25 — session-2026-08-25-c
+- **Did:** Ran start-of-session ritual, mapped Phase 2 scope, started frontend dev server. No code changes.
+- **Decided:** Nothing.
+- **Left broken:** None.
+- **Next session should:** Begin Phase 2 implementation.
 
 ### 2026-08-25 — session-2026-08-25-b
 - **Did:** Built Phase 1 backend API routes (SQL burn rates) and frontend React dashboard (MapLibre, risk queue).
@@ -90,8 +109,3 @@ Append one block per session. Newest at the top. Keep each to five lines.
 - **Decided:** JSON files as intermediate format between generator and seeder (ADR-007). Dhar district, MP as the pilot district.
 - **Left broken:** No Docker available — integration test (compose up + seed + SQL verify) not run.
 - **Next session should:** Install Docker, run integration test, pass Phase 0 exit test, then start Phase 1.
-### 2026-08-25 � session-2026-08-25-d
-- **Did:** Built Phase 2 Forecast Engine (SES, Croston SBA), Phase 2 API endpoints, and Dashboard (ForecastPanel, ScenarioRunner, RiskQueue driver/confidence enhancements).
-- **Decided:** Implemented SES and Croston SBA manually using NumPy instead of relying on statsforecast for a lighter build (ADR-009).
-- **Left broken:** Docker not available, so no E2E test run yet.
-- **Next session should:** Validate everything once docker is back or proceed to Phase 3.

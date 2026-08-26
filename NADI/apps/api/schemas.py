@@ -146,12 +146,12 @@ class KpiResponse(CamelModel):
 # Forecast (Phase 2)
 # ---------------------------------------------------------------------------
 
-class ForecastHistoryItem(CamelModel):
+class ForecastHistoryPoint(CamelModel):
     date: str
     quantity: int
 
 
-class ForecastBandItem(CamelModel):
+class ForecastPoint(CamelModel):
     date: str
     predicted: float
     lower: float
@@ -159,9 +159,9 @@ class ForecastBandItem(CamelModel):
 
 
 class ForecastResponse(CamelModel):
-    history: List[ForecastHistoryItem]
-    forecast: List[ForecastBandItem]
-    reorder_point: float
+    history: List[ForecastHistoryPoint]
+    forecast: List[ForecastPoint]
+    reorder_point: int
     stockout_date: Optional[str] = None
     days_to_stockout: Optional[float] = None
     confidence: float
@@ -169,21 +169,27 @@ class ForecastResponse(CamelModel):
     method_used: str
 
 
-class ScenarioRequest(BaseModel):
+class ScenarioRequest(CamelModel):
     condition: str
     multiplier: float = 3.0
     district: str = "Dhar"
     start_week: Optional[int] = None
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
-
 
 class ScenarioResponse(CamelModel):
-    affected_facilities: int
+    affected: int
+    condition: str
+    multiplier: float
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+class ErrorDetail(BaseModel):
+    code: str
     message: str
 
 
-
+class ErrorResponse(BaseModel):
+    error: ErrorDetail

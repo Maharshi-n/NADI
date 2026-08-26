@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -259,6 +260,7 @@ class Forecast(Base):
 
     __table_args__ = (
         Index("ix_forecasts_facility_stockout", "facility_id", "days_to_stockout"),
+        UniqueConstraint("facility_id", "drug_id", name="uq_forecasts_facility_drug"),
     )
 
 

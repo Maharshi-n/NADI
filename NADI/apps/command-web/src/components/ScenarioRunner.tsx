@@ -1,42 +1,42 @@
 import { useState } from 'react';
 import { fireScenario, resetDemo } from '../api/client';
-import type { ScenarioResponse } from '../api/client';
 
 interface ScenarioRunnerProps {
-  onScenarioChange: () => void;
+  onScenarioFired: () => void;
 }
 
 const CONDITIONS = [
-  { value: 'dengue', label: 'Dengue', emoji: '🦟' },
-  { value: 'malaria', label: 'Malaria', emoji: '🦟' },
-  { value: 'diarrhoeal', label: 'Diarrhoeal', emoji: '💧' },
-  { value: 'respiratory_infection', label: 'Respiratory', emoji: '🫁' },
-  { value: 'tuberculosis', label: 'TB', emoji: '🫁' },
+  { value: 'dengue', label: 'Dengue' },
+  { value: 'malaria', label: 'Malaria' },
+  { value: 'diarrhoeal', label: 'Diarrhoeal' },
+  { value: 'respiratory_infection', label: 'Respiratory Infection' },
+  { value: 'tuberculosis', label: 'Tuberculosis' },
 ];
 
 /**
- * Scenario runner — "Run outbreak scenario" controls.
- * Fires POST /api/demo/scenario with the selected condition and multiplier,
- * then triggers a data reload via onScenarioChange callback.
+ * Scenario runner — fire outbreak scenarios and reset.
+ * Phase 2: "Run outbreak scenario" wired to the demo endpoint.
  */
-export function ScenarioRunner({ onScenarioChange }: ScenarioRunnerProps) {
+export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
   const [condition, setCondition] = useState('dengue');
   const [multiplier, setMultiplier] = useState(3);
   const [firing, setFiring] = useState(false);
   const [resetting, setResetting] = useState(false);
-  const [result, setResult] = useState<ScenarioResponse | null>(null);
-  const [isActive, setIsActive] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
 
   const handleFire = async () => {
     setFiring(true);
     setResult(null);
     try {
-      const res = await fireScenario({ condition, multiplier });
-      setResult(res);
-      setIsActive(true);
-      onScenarioChange();
+      const res = await fireScenario({
+        condition,
+        multiplier,
+        district: 'Dhar',
+      });
+      setResult(`🔥 ${res.condition} outbreak (${res.multiplier}×) — ${res.affected} facilities affected`);
+      onScenarioFired();
     } catch (err) {
-      console.error('Scenario failed:', err);
+      setResult(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setFiring(false);
     }
@@ -46,99 +46,83 @@ export function ScenarioRunner({ onScenarioChange }: ScenarioRunnerProps) {
     setResetting(true);
     setResult(null);
     try {
-      const res = await resetDemo();
-      setResult(res);
-      setIsActive(false);
-      onScenarioChange();
+      await resetDemo();
+      setResult('✓ Seed state restored');
+      onScenarioFired();
     } catch (err) {
-      console.error('Reset failed:', err);
+      setResult(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setResetting(false);
     }
   };
 
-  const selectedEmoji = CONDITIONS.find(c => c.value === condition)?.emoji || '🦠';
-
   return (
-    <div className="scenario-runner glass-card" id="scenario-runner">
+    <div className="scenario-runner" id="scenario-runner">
       <div className="scenario-runner__header">
-        <span className="scenario-runner__title">
-          {selectedEmoji} Outbreak Scenario
-        </span>
-        {isActive && (
-          <span className="scenario-runner__active-badge">ACTIVE</span>
-        )}
+        <span className="scenario-runner__icon">⚡</span>
+        Outbreak Scenario
       </div>
 
       <div className="scenario-runner__controls">
-        <div className="scenario-runner__row">
-          <label className="scenario-runner__label">Condition</label>
+        <div className="scenario-runner__field">
+          <label className="scenario-runner__label" htmlFor="scenario-condition">Condition</label>
           <select
+            id="scenario-condition"
             className="scenario-runner__select"
             value={condition}
             onChange={(e) => setCondition(e.target.value)}
-            id="scenario-condition"
+            disabled={firing}
           >
-            {CONDITIONS.map(c => (
-              <option key={c.value} value={c.value}>
-                {c.emoji} {c.label}
-              </option>
+            {CONDITIONS.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>
         </div>
 
-        <div className="scenario-runner__row">
-          <label className="scenario-runner__label">
-            Multiplier: {multiplier}×
+        <div className="scenario-runner__field">
+          <label className="scenario-runner__label" htmlFor="scenario-multiplier">
+            Surge: {multiplier}×
           </label>
           <input
+            id="scenario-multiplier"
             type="range"
             className="scenario-runner__slider"
             min={2}
             max={5}
             step={0.5}
             value={multiplier}
-            onChange={(e) => setMultiplier(parseFloat(e.target.value))}
-            id="scenario-multiplier"
+            onChange={(e) => setMultiplier(Number(e.target.value))}
+            disabled={firing}
           />
+          <div className="scenario-runner__range-labels">
+            <span>2×</span>
+            <span>5×</span>
+          </div>
         </div>
 
         <div className="scenario-runner__actions">
           <button
+            id="scenario-fire-btn"
             className="scenario-runner__btn scenario-runner__btn--fire"
             onClick={handleFire}
             disabled={firing || resetting}
-            id="scenario-fire"
           >
-            {firing ? (
-              <span className="scenario-runner__spinner" />
-            ) : (
-              '🔥 Fire Outbreak'
-            )}
+            {firing ? 'Injecting…' : '🔥 Fire Outbreak'}
           </button>
           <button
+            id="scenario-reset-btn"
             className="scenario-runner__btn scenario-runner__btn--reset"
             onClick={handleReset}
-            disabled={firing || resetting || !isActive}
-            id="scenario-reset"
+            disabled={firing || resetting}
           >
-            {resetting ? (
-              <span className="scenario-runner__spinner" />
-            ) : (
-              '↺ Reset'
-            )}
+            {resetting ? 'Resetting…' : '↺ Reset'}
           </button>
         </div>
       </div>
 
       {result && (
-        <div className={`scenario-runner__result ${isActive ? 'scenario-runner__result--active' : 'scenario-runner__result--reset'}`}>
-          {result.message}
-          {isActive && result.affectedFacilities > 0 && (
-            <span className="scenario-runner__affected">
-              {result.affectedFacilities} facilities affected
-            </span>
-          )}
+        <div className={`scenario-runner__result ${result.startsWith('Error') ? 'scenario-runner__result--error' : ''}`}>
+          {result}
         </div>
       )}
     </div>

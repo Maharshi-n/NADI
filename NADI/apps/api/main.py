@@ -2,7 +2,7 @@
 NADI API — FastAPI application.
 
 Demo mode is a first-class feature: no auth, role switcher in header,
-auto-seed on startup if DB is empty. Phase 2: auto-compute forecasts.
+auto-seed on startup if DB is empty.
 """
 
 import os
@@ -16,13 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.insert(0, os.path.dirname(__file__))
 
 from db import async_engine, AsyncSessionLocal
-from models import Base, Facility, Forecast
-from routes import router as api_router, compute_all_forecasts
+from models import Base, Facility
+from routes import router as phase1_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """On startup: create tables, auto-seed if empty, compute forecasts."""
+    """On startup: create tables, auto-seed if empty."""
     # Create tables (safe if they already exist)
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -34,14 +34,6 @@ async def lifespan(app: FastAPI):
         count = result.scalar()
         if count == 0:
             print("DB is empty — run 'python data/seed.py --reset' to seed.")
-        else:
-            # Auto-compute forecasts if forecasts table is empty
-            fc_result = await session.execute(select(func.count()).select_from(Forecast))
-            fc_count = fc_result.scalar()
-            if fc_count == 0:
-                print("Computing initial forecasts...")
-                computed = await compute_all_forecasts(session)
-                print(f"  Computed {computed} forecasts.")
 
     yield
 
@@ -52,7 +44,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="NADI API",
     description="Predicts PHC capacity shortages and proposes transfers.",
-    version="0.2.0",
+    version="0.1.0",
     lifespan=lifespan,
 )
 
@@ -64,8 +56,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount API routes (Phase 1 + Phase 2)
-app.include_router(api_router)
+# Mount Phase 1 routes
+app.include_router(phase1_router)
 
 
 @app.get("/api/health")

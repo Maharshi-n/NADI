@@ -1,8 +1,6 @@
 /**
  * API client — typed fetch wrapper for /api/* endpoints.
  * Base URL configurable via env var for dev/prod.
- *
- * Phase 2: adds forecast, scenario, and reset endpoints.
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
@@ -24,20 +22,6 @@ async function fetchJSON<T>(path: string, params?: Record<string, string | numbe
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error?.message || `API error: ${res.status}`);
-  }
-  return res.json();
-}
-
-async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.error?.message || `API error: ${res.status}`);
   }
   return res.json();
 }
@@ -121,43 +105,6 @@ export interface KpiResponse {
   fillRate: number;
 }
 
-// ---------- Phase 2 types ----------
-
-export interface ForecastHistoryItem {
-  date: string;
-  quantity: number;
-}
-
-export interface ForecastBandItem {
-  date: string;
-  predicted: number;
-  lower: number;
-  upper: number;
-}
-
-export interface ForecastResponse {
-  history: ForecastHistoryItem[];
-  forecast: ForecastBandItem[];
-  reorderPoint: number;
-  stockoutDate: string | null;
-  daysToStockout: number | null;
-  confidence: number;
-  driver: string;
-  methodUsed: string;
-}
-
-export interface ScenarioRequest {
-  condition: string;
-  multiplier: number;
-  district?: string;
-  startWeek?: number;
-}
-
-export interface ScenarioResponse {
-  affectedFacilities: number;
-  message: string;
-}
-
 // ---------- API calls ----------
 
 export function fetchFacilities(params?: {
@@ -187,16 +134,68 @@ export function fetchKpis(params?: {
   return fetchJSON('/kpis', params);
 }
 
-// Phase 2
+// ---------- Phase 2: Forecast & Scenario ----------
 
-export function fetchForecast(facilityId: number, drugId: number): Promise<ForecastResponse> {
-  return fetchJSON('/forecast', { facilityId, drugId });
+export interface ForecastHistoryPoint {
+  date: string;
+  quantity: number;
 }
 
-export function fireScenario(body: ScenarioRequest): Promise<ScenarioResponse> {
-  return postJSON('/demo/scenario', body);
+export interface ForecastPoint {
+  date: string;
+  predicted: number;
+  lower: number;
+  upper: number;
 }
 
-export function resetDemo(): Promise<ScenarioResponse> {
+export interface ForecastResponse {
+  history: ForecastHistoryPoint[];
+  forecast: ForecastPoint[];
+  reorderPoint: number;
+  stockoutDate: string | null;
+  daysToStockout: number | null;
+  confidence: number;
+  driver: string;
+  methodUsed: string;
+}
+
+export interface ScenarioRequest {
+  condition: string;
+  multiplier: number;
+  district?: string;
+}
+
+export interface ScenarioResponse {
+  affected: number;
+  condition: string;
+  multiplier: number;
+}
+
+export function fetchForecast(params: {
+  facilityId: number;
+  drugId: number;
+}): Promise<ForecastResponse> {
+  return fetchJSON('/forecast', params);
+}
+
+async function postJSON<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b?.error?.message || `API error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export function fireScenario(req: ScenarioRequest): Promise<ScenarioResponse> {
+  return postJSON('/demo/scenario', req as unknown as Record<string, unknown>);
+}
+
+export function resetDemo(): Promise<{ status: string; message: string }> {
   return postJSON('/demo/reset', {});
 }

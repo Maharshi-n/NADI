@@ -94,17 +94,30 @@ the generator on a different machine from the database.
 is inspectable. `data/generated/` is gitignored (45 MB). Two-step
 workflow: generate then seed.
 
-## ADR-008 � Free OpenStreetMap tiles via MapLibre GL
+## ADR-008 — Free OpenStreetMap tiles via MapLibre GL
 **Date:** 2026-08-25 | **Session:** session-2026-08-25-b | **Status:** accepted
 **Context:** Phase 1 requires a map of facilities. We need a map provider.
 **Decision:** Use MapLibre GL with CartoDB dark_all tiles (OpenStreetMap).
 **Rejected:** Mapbox GL JS (requires token/account), Google Maps (requires billing/key).
 **Consequence:** No API keys required in .env for map functionality. Free and open.
 
-
-## ADR-009 � Custom NumPy Forecasting Engine
+## ADR-009 — Custom NumPy Forecasting Engine
 **Date:** 2026-08-25 | **Session:** session-2026-08-25-d | **Status:** accepted
 **Context:** Phase 2 requires SES and Croston SBA forecasting methods. Using statsforecast/Nixtla requires heavy C dependencies, complicating the Docker image and build process.
 **Decision:** Implement SES and Croston SBA in pure Python using NumPy (ml/forecasting/engine.py).
-**Rejected:** Adding statsforecast to equirements.txt. Too heavy, overkill for simple exponential smoothing and Croston SBA which can be implemented in ~150 lines of code.
+**Rejected:** Adding statsforecast to requirements.txt. Too heavy, overkill for simple exponential smoothing and Croston SBA which can be implemented in ~150 lines of code.
 **Consequence:** Forecasting logic must be maintained internally, but the deployment artifact remains lightweight.
+
+## ADR-010 — 7-day lead time for reorder point
+**Date:** 2026-08-25 | **Session:** session-2026-08-25-d | **Status:** accepted
+**Context:** The reorder point formula (`burn_rate x lead_time`) needs a lead time assumption. Different facilities have different supply chain distances.
+**Decision:** Default to 7 days for all facilities. Reasonable for intra-district transfers within Dhar.
+**Rejected:** Per-facility configurable lead times. Adds schema complexity for no current Phase 2 benefit. Can be added in Phase 3 (Transfer) when actual transfer routing is implemented.
+**Consequence:** Reorder point is conservative for nearby facilities and aggressive for remote ones. Acceptable for MVP.
+
+## ADR-011 — Outbreak factor capped at 5x
+**Date:** 2026-08-25 | **Session:** session-2026-08-25-d | **Status:** accepted
+**Context:** The outbreak factor compares recent disease signal case counts to baseline. Extreme ratios (e.g., baseline near zero) can produce absurd forecasts.
+**Decision:** Cap the outbreak factor at 5x and require a minimum baseline of 5 cases. Display the capped percentage in driver strings.
+**Rejected:** Uncapped factors — led to "Dengue +17M%" in testing when baseline was near-zero. Also rejected logarithmic scaling — harder to explain to CMHO users.
+**Consequence:** Forecasts never inflate beyond 5x from outbreak alone. Combined with season factor, total inflation is bounded and human-readable.

@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react';
 import type { RiskItem } from '../api/client';
 import { SkeletonRiskItem } from './Skeleton';
 
@@ -12,14 +13,52 @@ interface RiskQueueProps {
 /**
  * Risk queue — ranked list, clickable.
  * Sorted ascending by days remaining (server-side).
- * Clicking a row highlights its map pin.
- * Phase 2: shows confidence badge and driver string per row.
+ * Phase 2: shows confidence badge and driver string.
  */
 export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, onSelect }: RiskQueueProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+
+  const groupedItems = useMemo(() => {
+    const groups: {
+      facilityId: number;
+      facilityName: string;
+      worstStatus: string;
+      worstDays: number | null;
+      items: RiskItem[];
+    }[] = [];
+    const map = new Map<number, typeof groups[0]>();
+
+    items.forEach(item => {
+      if (!map.has(item.facilityId)) {
+        const newGroup = {
+          facilityId: item.facilityId,
+          facilityName: item.facilityName,
+          worstStatus: item.status,
+          worstDays: item.daysToStockout,
+          items: [],
+        };
+        map.set(item.facilityId, newGroup);
+        groups.push(newGroup);
+      }
+      map.get(item.facilityId)!.items.push(item);
+    });
+    return groups;
+  }, [items]);
+
+  const toggleExpand = (facilityId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(facilityId)) next.delete(facilityId);
+      else next.add(facilityId);
+      return next;
+    });
+  };
+
   return (
     <div className="risk-queue" id="risk-queue">
       <div className="risk-queue__header">
-        Risk Queue — {loading ? '...' : `${items.length} items`}
+        Risk Queue — {loading ? '...' : `${groupedItems.length} items`}
       </div>
 
       {loading ? (
@@ -28,7 +67,7 @@ export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, 
             <SkeletonRiskItem key={i} />
           ))}
         </>
-      ) : items.length === 0 ? (
+      ) : groupedItems.length === 0 ? (
         <div style={{
           padding: '40px 20px',
           textAlign: 'center',
@@ -38,46 +77,75 @@ export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, 
           All facilities are healthy ✓
         </div>
       ) : (
-        items.map((item, i) => {
-          const isSelected = selectedFacilityId === item.facilityId && selectedDrugId === item.drugId;
-          const statusClass = `risk-queue__days--${item.status}`;
+        groupedItems.map((group, i) => {
+          const isExpanded = expandedIds.has(group.facilityId);
+          const statusClass = `risk-queue__days--${group.worstStatus}`;
 
           return (
-            <div
-              key={`${item.facilityId}-${item.drugId}-${i}`}
-              className={`risk-queue__item ${isSelected ? 'risk-queue__item--selected' : ''}`}
-              id={`risk-item-${item.facilityId}-${item.drugId}`}
-              onClick={() => onSelect(item)}
-            >
-              <span className={`status-dot status-dot--${item.status}`} />
-
-              <div className="risk-queue__item-info">
-                <div className="risk-queue__facility">{item.facilityName}</div>
-                <div className="risk-queue__drug">{item.drugName}</div>
-                {/* Phase 2: Driver string */}
-                {item.driver && (
-                  <div className="risk-queue__driver">{item.driver}</div>
-                )}
-              </div>
-
-              <div className="risk-queue__right">
-                <div className="risk-queue__days">
-                  <div className={statusClass}>
-                    {item.daysToStockout != null ? Math.round(item.daysToStockout) : '—'}
-                  </div>
-                  <div className="risk-queue__days-label">days</div>
+            <div key={`${group.facilityId}-${i}`} className="risk-queue__group">
+              {/* Facility Header */}
+              <div 
+                className="risk-queue__facility-header" 
+                onClick={(e) => toggleExpand(group.facilityId, e)}
+              >
+                <span className={`status-dot status-dot--${group.worstStatus}`} />
+                <div className="risk-queue__item-info">
+                  <div className="risk-queue__facility">{group.facilityName}</div>
+                  <div className="risk-queue__drug">{group.items.length} medicines in shortage</div>
                 </div>
-                {/* Phase 2: Confidence badge */}
-                {item.confidence != null && (
-                  <div className={`risk-queue__confidence ${
-                    item.confidence >= 0.7 ? 'risk-queue__confidence--high' :
-                    item.confidence >= 0.4 ? 'risk-queue__confidence--mid' :
-                    'risk-queue__confidence--low'
-                  }`}>
-                    {Math.round(item.confidence * 100)}%
+                <div className="risk-queue__right">
+                  <div className="risk-queue__days">
+                    <div className={statusClass}>
+                      {group.worstDays != null ? Math.round(group.worstDays) : '—'}
+                    </div>
+                    <div className="risk-queue__days-label">days</div>
                   </div>
-                )}
+                  <div className={`risk-queue__chevron ${isExpanded ? 'risk-queue__chevron--expanded' : ''}`}>
+                    ▼
+                  </div>
+                </div>
               </div>
+
+              {/* Expanded Drugs List */}
+              {isExpanded && (
+                <div className="risk-queue__expanded-list">
+                  {group.items.map((item, j) => {
+                    const isSelected = selectedFacilityId === item.facilityId && selectedDrugId === item.drugId;
+                    const itemStatusClass = `risk-queue__days--${item.status}`;
+                    
+                    return (
+                      <div
+                        key={`${item.facilityId}-${item.drugId}-${j}`}
+                        className={`risk-queue__item ${isSelected ? 'risk-queue__item--selected' : ''}`}
+                        id={`risk-item-${item.facilityId}-${item.drugId}`}
+                        onClick={() => onSelect(item)}
+                      >
+                        <div className="risk-queue__item-info">
+                          <div className="risk-queue__drug" style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                            {item.drugName}
+                          </div>
+                          {item.driver && (
+                            <div className="risk-queue__driver">{item.driver}</div>
+                          )}
+                        </div>
+
+                        <div className="risk-queue__right">
+                          <div className="risk-queue__days" style={{ fontSize: '0.9rem' }}>
+                            <div className={itemStatusClass}>
+                              {item.daysToStockout != null ? Math.round(item.daysToStockout) : '—'}
+                            </div>
+                          </div>
+                          {item.confidence != null && (
+                            <div className="risk-queue__confidence">
+                              {Math.round(item.confidence * 100)}%
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })
