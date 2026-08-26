@@ -245,12 +245,14 @@ def compute_confidence(
     history: List[float],
     method: str,
     demand_class: str,
+    trust_score: float = 1.0,
 ) -> float:
     """
     Confidence score [0, 1] based on:
     - History length (more data = higher confidence)
     - Data density (fewer zeros = higher for non-intermittent)
     - Method appropriateness
+    - Trust score of the facility
     """
     n = len(history)
     non_zero = sum(1 for v in history if v > 0)
@@ -265,8 +267,8 @@ def compute_confidence(
     else:
         density_score = density  # Higher is better for smooth
     
-    # Combined
-    confidence = 0.5 * length_score + 0.4 * density_score + 0.1
+    # Combined with trust score
+    confidence = (0.5 * length_score + 0.4 * density_score + 0.1) * trust_score
     return round(min(max(confidence, 0.1), 0.99), 2)
 
 
@@ -324,6 +326,7 @@ def forecast_facility_drug(
     current_month: int,
     season_factors: List[dict],
     disease_signals: List[dict],
+    trust_score: float = 1.0,
     horizon: int = 30,
     lead_time_days: int = 7,
 ) -> dict:
@@ -380,7 +383,7 @@ def forecast_facility_drug(
     driver = identify_driver(sf, of, outbreak_driver, burn_trend)
     
     # 10. Confidence
-    confidence = compute_confidence(values, method, demand_class)
+    confidence = compute_confidence(values, method, demand_class, trust_score=trust_score)
     
     return {
         "predicted_daily_rate": round(predicted_rate, 2),

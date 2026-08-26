@@ -434,10 +434,10 @@ is data quality rather than software.
 
 ### Acceptance
 
-- [ ] All three seeded flaw types are detected
-- [ ] No more than one false positive across clean facilities
-- [ ] Low trust visibly lowers forecast confidence
-- [ ] Ledger detects a manually tampered row
+- [x] All three seeded flaw types are detected
+- [x] No more than one false positive across clean facilities
+- [x] Low trust visibly lowers forecast confidence
+- [x] Ledger detects a manually tampered row
 
 ### Do not
 

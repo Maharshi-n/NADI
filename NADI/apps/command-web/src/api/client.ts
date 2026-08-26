@@ -313,6 +313,7 @@ export interface FlClientResponse {
   status: string | null;
 }
 
+
 export interface FederationStatusResponse {
   rounds: FlRoundResponse[];
   clients: FlClientResponse[];
@@ -322,6 +323,28 @@ export function fetchFederationStatus(): Promise<FederationStatusResponse> {
   return fetchJSON('/federation/status');
 }
 
-export function runFederationSimulation(): Promise<{ status: string; message: string }> {
-  return postJSON('/demo/federation/run', {});
+export async function runFederationSimulation() {
+  const res = await fetch(`${API_BASE}/demo/federation/run`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error('Failed to run simulation');
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — Trust
+// ---------------------------------------------------------------------------
+
+export async function getAnomalies() {
+  const res = await fetch(`${API_BASE}/trust/anomalies`);
+  if (!res.ok) throw new Error('Failed to fetch anomalies');
+  return res.json();
+}
+
+export async function runTrustSimulation() {
+  const res = await fetch(`${API_BASE}/demo/trust/run`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error('Failed to run trust simulation');
+  return res.json();
 }

@@ -138,6 +138,10 @@ export function Dashboard() {
           <FacilityDetail
             facilityId={selectedFacilityId}
             onClose={handleCloseDetail}
+            onSelectDrug={(drugId, drugName) => {
+              setSelectedDrugId(drugId);
+              setSelectedDrugName(drugName);
+            }}
           />
         )}
 

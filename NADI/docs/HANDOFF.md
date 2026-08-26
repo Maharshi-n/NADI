@@ -7,9 +7,9 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 6 - Federation
-**Status:** Phase 6 is fully implemented. The simulated FedProx federated learning environment successfully trains across 5 state clients and persists round data to the database, verifiable via the Command Web Federation UI.
-**Last updated:** 2026-08-26 by session-2026-08-26-g
+**Phase:** 7 - Trust
+**Status:** Phase 7 is fully implemented. Anomaly detection (Benford's law, impossible rates, backdated edits) and a simulated hash-chained ledger are working. Detected anomalies surface on the new Data Trust dashboard.
+**Last updated:** 2026-08-26 by session-2026-08-26-h
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -30,13 +30,15 @@ session. Append to the log. Never let this drift from reality.
 - **Phase 5 UI**: `CapacityPanel` overlays the map to show CBI ring, constraint bars, bed spillover info, and staff roster. RiskQueue flags facilities with staff/bed bottlenecks instead of just medicines.
 - **Phase 6 Federation API**: Added `/api/federation/status` (fetches `fl_rounds` and `fl_clients`) and `/api/demo/federation/run` (triggers `simulation.py`).
 - **Phase 6 Federation UI**: Built `FederationDashboard.tsx` in `apps/command-web`. Features 5 state cards showing training status and sample size, an accuracy line chart (FedProx vs Baseline), a mono-font transfer log proving zero raw records were transferred, and a cold-start callout for Chhattisgarh.
+- **Phase 7 Trust API**: Added `/api/trust/anomalies` to fetch anomalies and `/api/demo/trust/run` to trigger anomaly detection and ledger hashing. `ml/anomaly/detector.py` handles Benford's law, impossible consumption rates, and backdated edit checks.
+- **Phase 7 Trust UI**: Created `DataTrust.tsx` in `apps/command-web` for viewing detected data anomalies with confidence and rule triggers.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
 - None.
 
 **Next task, precisely:**
-1. Start Phase 7 (Trust). Implement Benford's law anomaly detection and the hash-chained ledger.
+1. Start Phase 8 (War room) or proceed to Phase 9 (Ship) if out of time.
 
 ---
 
@@ -87,6 +89,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-h
+- **Did:** Implemented Phase 7 Trust features. Added `ml/anomaly/detector.py` to detect anomalies via Benford's law, impossible rates, and backdated edits, and to compute ledger hashes. Added Trust endpoints to `apps/api/routes.py` and built the `DataTrust.tsx` dashboard.
+- **Decided:** Computed hashes and ran detection dynamically on the demo trigger rather than at insert time to ensure batch demo compatibility (ADR-022).
+- **Left broken:** None. The Data Trust dashboard successfully highlights the seeded flaws.
+- **Next session should:** Begin Phase 8 (War room) or jump to Phase 9 (Ship).
 
 ### 2026-08-26 — session-2026-08-26-g
 - **Did:** Implemented Phase 6 Federation features. Built `ml/federated/simulation.py` to mock 10 rounds of training across 5 states. Added API endpoints to retrieve training data. Created `FederationDashboard` with state cards, Recharts accuracy comparison, and a live transfer log.

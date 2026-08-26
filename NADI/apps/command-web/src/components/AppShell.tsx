@@ -77,6 +77,19 @@ export function AppShell({
           >
             Federation
           </div>
+          <div 
+            onClick={() => onViewChange?.('trust')}
+            style={{ 
+              cursor: 'pointer',
+              color: currentView === 'trust' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontWeight: currentView === 'trust' ? 500 : 400,
+              borderBottom: currentView === 'trust' ? '2px solid var(--accent-glow)' : '2px solid transparent',
+              padding: '16px 0',
+              transition: 'all 0.2s'
+            }}
+          >
+            Data Trust
+          </div>
         </nav>
 
         <div className="app-header__right">
@@ -141,7 +154,9 @@ export function AppShell({
           </div>
         </div>
       </header>
-      {children}
+      <main style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        {children}
+      </main>
     </>
   );
 }

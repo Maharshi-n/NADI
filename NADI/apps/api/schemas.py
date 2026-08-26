@@ -396,3 +396,26 @@ class FederationStatusResponse(CamelModel):
     rounds: List[FlRoundResponse]
     clients: List[FlClientResponse]
 
+
+# ---------------------------------------------------------------------------
+# Phase 7 — Trust
+# ---------------------------------------------------------------------------
+
+class AnomalyResponse(CamelModel):
+    id: int
+    facility_id: int
+    facility_name: str
+    drug_id: Optional[int] = None
+    drug_name: Optional[str] = None
+    detected_at: datetime
+    rule: str
+    confidence: float
+    resolved: bool
+    note: Optional[str] = None
+
+
+class DataTrustStatusResponse(CamelModel):
+    status: str
+    anomalies_detected: int
+    ledger_hashes_computed: int
+

@@ -190,3 +190,10 @@ workflow: generate then seed.
 **Decision:** Always include an info hover icon (`ⓘ`) next to confusing or derived metrics in the UI, which displays a simple-language explanation on hover and disappears otherwise.
 **Rejected:** Explaining it in an external user manual or assuming domain knowledge. Users need inline context exactly where the confusion happens.
 **Consequence:** Future UI additions displaying complex/derived metrics must include a tooltip explaining the calculation basis in plain English.
+
+## ADR-022 — Dynamic anomaly detection and hashing for demo
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-h | **Status:** accepted
+**Context:** Phase 7 (Trust) requires append-only hash chains and statistical anomaly detection (Benford's law). Applying this continuously on insert would slow down initial data seeding or require complex background workers not suited for a hackathon demo.
+**Decision:** Compute hashes and run detection dynamically via a dedicated demo trigger endpoint (`/api/demo/trust/run`), similar to federation.
+**Rejected:** In-flight trigger/middleware hash chaining and cron-based anomaly detection. Adds unnecessary moving parts and deployment risks for a constrained demo environment.
+**Consequence:** The "hash" column on transactions remains null until the trust demo script is manually triggered, proving the capability without the overhead.

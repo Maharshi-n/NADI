@@ -6,13 +6,14 @@ import { Skeleton } from './Skeleton';
 interface FacilityDetailProps {
   facilityId: number;
   onClose: () => void;
+  onSelectDrug?: (drugId: number, drugName: string) => void;
 }
 
 /**
  * Facility detail panel — shows on the map when a facility is selected.
  * Displays stock breakdown with burn rate and days of cover.
  */
-export function FacilityDetail({ facilityId, onClose }: FacilityDetailProps) {
+export function FacilityDetail({ facilityId, onClose, onSelectDrug }: FacilityDetailProps) {
   const [facility, setFacility] = useState<FacilityDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -78,7 +79,11 @@ export function FacilityDetail({ facilityId, onClose }: FacilityDetailProps) {
             <span style={{ textAlign: 'right' }}>Cover</span>
           </div>
           {facility.stock.slice(0, 10).map((s) => (
-            <div key={s.drugId} className="facility-detail__stock-row">
+            <div 
+              key={s.drugId} 
+              className={`facility-detail__stock-row ${onSelectDrug ? 'facility-detail__stock-row--clickable' : ''}`}
+              onClick={() => onSelectDrug?.(s.drugId, s.name)}
+            >
               <span className="facility-detail__stock-name">
                 {s.isEssential && <span style={{ color: 'var(--accent)', marginRight: 4 }}>●</span>}
                 {s.name}

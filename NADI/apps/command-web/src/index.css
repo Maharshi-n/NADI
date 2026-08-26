@@ -296,6 +296,7 @@ a {
   display: flex;
   flex: 1;
   overflow: hidden;
+  height: 100%;
 }
 
 .dashboard__map {
@@ -574,6 +575,15 @@ a {
   background: rgba(255, 255, 255, 0.02);
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
+  transition: background var(--transition-fast);
+}
+
+.facility-detail__stock-row--clickable {
+  cursor: pointer;
+}
+
+.facility-detail__stock-row--clickable:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .facility-detail__stock-name {
@@ -621,6 +631,10 @@ a {
   color: var(--text-primary) !important;
   padding: 12px 16px !important;
   box-shadow: var(--shadow-lg) !important;
+}
+
+.maplibregl-canvas {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
 }
 
 .maplibregl-popup-tip {
