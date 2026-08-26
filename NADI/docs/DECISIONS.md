@@ -169,3 +169,17 @@ workflow: generate then seed.
 **Decision:** Replaced the inline input with a static clickable `div` that triggers a full-screen mobile modal (bottom sheet/overlay) for editing the medicine name. Added a prominent red `UNRECOGNIZED DRUG` tag when the drug doesn't match.
 **Rejected:** Accordion rows or inline editing. A modal provides a focused, native-app-like experience for text entry and datalist selection on mobile screens.
 **Consequence:** State management for `editingRowIndex` added to `ScanTab`.
+
+## ADR-019 — Compute capacity scores dynamically on read
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-g | **Status:** accepted
+**Context:** Phase 5 requires computing a Capacity Bottleneck Index (CBI) which is the minimum of medicine, bed, and staff scores.
+**Decision:** Compute the scores dynamically in SQL within `GET /api/capacity`, relying on current `transactions`, `stock`, `bed_events`, and `staff_daily` tables, then upserting the result to `capacity_scores`.
+**Rejected:** Running a background cron job to compute scores every hour. This adds infrastructure complexity and could serve stale data during a demo.
+**Consequence:** The `/api/capacity` endpoint executes multiple heavy aggregate queries per facility. Acceptable for Phase 5 scale (26 facilities), but would need materialization at state scale.
+
+## ADR-020 — Hover tooltips for counterintuitive domain metrics
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-h | **Status:** accepted
+**Context:** Domain-specific metrics, such as "Medicine: 0%" meaning "0% of essential drugs are safely stocked" rather than "0 physical pills exist," routinely confuse users. 
+**Decision:** Always include an info hover icon (`ⓘ`) next to confusing or derived metrics in the UI, which displays a simple-language explanation on hover and disappears otherwise.
+**Rejected:** Explaining it in an external user manual or assuming domain knowledge. Users need inline context exactly where the confusion happens.
+**Consequence:** Future UI additions displaying complex/derived metrics must include a tooltip explaining the calculation basis in plain English.

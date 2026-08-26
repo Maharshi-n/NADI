@@ -42,6 +42,8 @@ export interface FacilityItem {
   bedsTotal: number;
   coldChainCapable: boolean;
   populationServed: number;
+  cbi: number | null;
+  bottleneck: string | null;
 }
 
 export interface FacilityListResponse {
@@ -84,8 +86,8 @@ export interface FacilityDetailResponse {
 export interface RiskItem {
   facilityId: number;
   facilityName: string;
-  drugId: number;
-  drugName: string;
+  drugId: number | null;
+  drugName: string | null;
   daysToStockout: number | null;
   confidence: number | null;
   driver: string | null;
@@ -254,4 +256,33 @@ export function generatePlan(req: PlanRequest = {}): Promise<PlanResponse> {
 
 export function approveTransfers(req: ApproveTransfersRequest): Promise<ApproveTransfersResponse> {
   return postJSON('/transfers/approve', req as unknown as Record<string, unknown>);
+}
+
+// ---------- Phase 5: Capacity ----------
+
+export interface SpilloverTarget {
+  facilityId: number;
+  name: string;
+}
+
+export interface CapacityResponse {
+  facilityId: number;
+  facilityName: string;
+  medicineScore: number;
+  bedScore: number;
+  staffScore: number;
+  cbi: number;
+  bottleneck: string;
+  bedsTotal: number;
+  bedsOccupied: number;
+  daysToSaturation: number | null;
+  spilloverTo: SpilloverTarget | null;
+  staffPresent: Record<string, number>;
+  staffRequired: Record<string, number>;
+}
+
+export function fetchCapacity(params?: {
+  facilityId?: number;
+}): Promise<CapacityResponse | CapacityResponse[]> {
+  return fetchJSON('/capacity', params);
 }

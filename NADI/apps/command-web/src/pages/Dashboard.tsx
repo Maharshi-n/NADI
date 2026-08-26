@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchFacilities, fetchRisk, fetchKpis } from '../api/client';
+import { fetchFacilities, fetchRisk, fetchKpis, fetchCapacity } from '../api/client';
 import type { FacilityItem, RiskItem, KpiResponse } from '../api/client';
 import { MapView } from '../components/Map';
 import { KpiTiles } from '../components/KpiTiles';
@@ -7,10 +7,12 @@ import { RiskQueue } from '../components/RiskQueue';
 import { FacilityDetail } from '../components/FacilityDetail';
 import { ForecastPanel } from '../components/ForecastPanel';
 import { ScenarioRunner } from '../components/ScenarioRunner';
+import { CapacityPanel } from '../components/CapacityPanel';
 
 /**
- * District Dashboard — Phase 2.
- * Composes map, KPI tiles, risk queue, forecast panel, scenario runner, and facility detail.
+ * District Dashboard — Phase 5.
+ * Composes map, KPI tiles, risk queue, forecast panel, scenario runner,
+ * facility detail, and capacity panel.
  */
 export function Dashboard() {
   const [facilities, setFacilities] = useState<FacilityItem[]>([]);
@@ -18,14 +20,22 @@ export function Dashboard() {
   const [kpis, setKpis] = useState<KpiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedFacilityId, setSelectedFacilityId] = useState<number | null>(null);
-  // Phase 2: track selected drug for forecast panel
   const [selectedDrugId, setSelectedDrugId] = useState<number | null>(null);
   const [selectedFacilityName, setSelectedFacilityName] = useState('');
   const [selectedDrugName, setSelectedDrugName] = useState('');
+  // Phase 5: track whether to show capacity panel
+  const [showCapacity, setShowCapacity] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      // Phase 5: trigger capacity computation first, then load everything
+      try {
+        await fetchCapacity({});
+      } catch {
+        // Capacity computation is best-effort
+      }
+
       const [facRes, riskRes, kpiRes] = await Promise.all([
         fetchFacilities({ limit: 100 }),
         fetchRisk({ limit: 100 }),
@@ -47,6 +57,17 @@ export function Dashboard() {
   }, [loadData]);
 
   const handleRiskSelect = useCallback((item: RiskItem) => {
+    // Phase 5: non-medicine bottleneck items open capacity panel
+    if (item.bottleneck !== 'medicine') {
+      setSelectedFacilityId(item.facilityId);
+      setSelectedDrugId(null);
+      setSelectedFacilityName(item.facilityName);
+      setSelectedDrugName('');
+      setShowCapacity(true);
+      return;
+    }
+
+    setShowCapacity(false);
     setSelectedFacilityId((prev) => {
       const isSame = prev === item.facilityId && selectedDrugId === item.drugId;
       if (isSame) {
@@ -57,7 +78,7 @@ export function Dashboard() {
       }
       setSelectedDrugId(item.drugId);
       setSelectedFacilityName(item.facilityName);
-      setSelectedDrugName(item.drugName);
+      setSelectedDrugName(item.drugName || '');
       return item.facilityId;
     });
   }, [selectedDrugId]);
@@ -66,10 +87,12 @@ export function Dashboard() {
     setSelectedFacilityId((prev) => {
       if (prev === id) {
         setSelectedDrugId(null);
+        setShowCapacity(false);
         return null;
       }
-      // When selecting from map, clear drug selection (show facility detail only)
+      // When selecting from map, show capacity panel
       setSelectedDrugId(null);
+      setShowCapacity(true);
       return id;
     });
   }, []);
@@ -77,13 +100,14 @@ export function Dashboard() {
   const handleCloseDetail = useCallback(() => {
     setSelectedFacilityId(null);
     setSelectedDrugId(null);
+    setShowCapacity(false);
   }, []);
 
   const handleScenarioFired = useCallback(() => {
     // Refresh all data after scenario fire or reset
     loadData();
-    // Clear forecast selection to force re-fetch
     setSelectedDrugId(null);
+    setShowCapacity(false);
   }, [loadData]);
 
   return (
@@ -101,15 +125,23 @@ export function Dashboard() {
           onSelectFacility={handleMapSelect}
         />
 
+        {/* Phase 5: Capacity panel overlay */}
+        {selectedFacilityId != null && showCapacity && (
+          <CapacityPanel
+            facilityId={selectedFacilityId}
+            onClose={handleCloseDetail}
+          />
+        )}
+
         {/* Facility detail overlay on the map */}
-        {selectedFacilityId != null && selectedDrugId == null && (
+        {selectedFacilityId != null && !showCapacity && selectedDrugId == null && (
           <FacilityDetail
             facilityId={selectedFacilityId}
             onClose={handleCloseDetail}
           />
         )}
 
-        {/* Phase 2: Forecast panel overlay on the map */}
+        {/* Forecast panel overlay on the map */}
         {selectedFacilityId != null && selectedDrugId != null && (
           <ForecastPanel
             facilityId={selectedFacilityId}

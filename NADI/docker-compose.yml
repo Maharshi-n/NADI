@@ -34,5 +34,19 @@ services:
       db:
         condition: service_healthy
 
+  web:
+    build:
+      context: ./apps/command-web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://api:8000
+    volumes:
+      - ./apps/command-web:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
 volumes:
   pgdata:

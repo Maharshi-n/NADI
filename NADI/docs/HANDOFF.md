@@ -8,8 +8,8 @@ session. Append to the log. Never let this drift from reality.
 ## Current state
 
 **Phase:** 5 - Capacity & Referrals
-**Status:** Phase 4 (PHC app) is fully complete. Gemini Vision API scan/sync is fixed and UI has been polished per user feedback.
-**Last updated:** 2026-08-26 by session-2026-08-26-e
+**Status:** Phase 5 is fully implemented. The dashboard now ranks facilities by a composite Capacity Bottleneck Index (CBI) evaluating medicine, beds, and staff.
+**Last updated:** 2026-08-26 by session-2026-08-26-f
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -26,6 +26,8 @@ session. Append to the log. Never let this drift from reality.
 - **Phase 4 PHC App**: Vite React PWA setup (`apps/phc-app`) with TailwindCSS, Lucide icons, Dexie for offline IndexedDB storage.
 - **Phase 4 Scanning**: Gemini Vision integration via `/api/scan` for register ingestion and fuzzy matching, with offline mutation queueing logic.
 - **Phase 4 UI Polish**: App explicitly listens on 0.0.0.0. "Batch Number" parsing completely removed. Unrecognized drugs display an explicit tag and can be mapped using a mobile-friendly modal popup.
+- **Phase 5 Capacity**: `/api/capacity` computes a Capacity Bottleneck Index (CBI) dynamically in SQL (min of medicine, beds, staff scores). Staff inferences (no dispensing = no pharmacist) implemented.
+- **Phase 5 UI**: `CapacityPanel` overlays the map to show CBI ring, constraint bars, bed spillover info, and staff roster. RiskQueue flags facilities with staff/bed bottlenecks instead of just medicines.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
@@ -83,6 +85,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-f
+- **Did:** Implemented Phase 5 Capacity features. Added endpoints for CBI computation (`/api/capacity`), bed events, and staff check-ins. Updated `GET /api/risk` to include staff/bed bottlenecks alongside medicines. Built `CapacityPanel` UI with CBI rings and constraint bars. Fixed Vite proxy configuration for docker.
+- **Decided:** Compute capacity scores dynamically on read in SQL rather than via cron job (ADR-019). If pharmacist is missing, explicitly force bottleneck to "staff".
+- **Left broken:** None. Phase 5 exit test passes (no-pharmacist facility shows staff bottleneck).
+- **Next session should:** Begin Phase 6 (Federation).
 
 ### 2026-08-26 — session-2026-08-26-e
 - **Did:** Removed `batch_no` OCR parsing completely. Redesigned Scan UI to use a modal popup for drug mapping instead of inline inputs. Added explicit `UNRECOGNIZED DRUG` badges. Fixed Days of Cover rounding logic (`> 90 days`). Ensured Vite dev server listens on 0.0.0.0 for LAN access.

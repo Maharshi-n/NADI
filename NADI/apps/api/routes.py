@@ -167,6 +167,25 @@ async def list_facilities(
             worst_days_of_cover=round(worst, 1) if worst is not None else None,
         ))
 
+    # Phase 5: enrich with CBI data from capacity_scores
+    try:
+        cbi_q = text("SELECT facility_id, cbi, bottleneck FROM capacity_scores")
+        cbi_res = await db.execute(cbi_q)
+        cbi_map = {r["facility_id"]: r for r in cbi_res.mappings().all()}
+
+        for item in items:
+            if item.id in cbi_map:
+                cap = cbi_map[item.id]
+                item.cbi = round(cap["cbi"], 2)
+                item.bottleneck = cap["bottleneck"]
+                # Override status if CBI indicates critical
+                if cap["cbi"] < 0.3:
+                    item.status = "critical"
+                elif cap["cbi"] < 0.6:
+                    item.status = "warning"
+    except Exception:
+        pass  # Capacity data is optional enrichment
+
     return FacilityListResponse(items=items, total=total)
 
 
@@ -437,15 +456,19 @@ async def list_risk(
         ),
         cover AS (
             SELECT
-                cs.facility_id,
-                cs.drug_id,
+                f.id AS facility_id,
+                d.id AS drug_id,
                 CASE
+                    WHEN COALESCE(cs.total_qty, 0) <= 0 THEN 0
                     WHEN b.burn_rate > 0 THEN cs.total_qty / b.burn_rate
                     ELSE NULL
                 END AS days_of_cover
-            FROM current_stock cs
-            LEFT JOIN burn b ON cs.facility_id = b.facility_id
-                            AND cs.drug_id = b.drug_id
+            FROM facilities f
+            CROSS JOIN drugs d
+            LEFT JOIN current_stock cs ON cs.facility_id = f.id AND cs.drug_id = d.id
+            LEFT JOIN burn b ON b.facility_id = f.id AND b.drug_id = d.id
+            WHERE d.is_essential = true
+              AND (CAST(:district AS text) IS NULL OR f.district = :district)
         )
         SELECT
             f.id AS facility_id,
@@ -489,15 +512,19 @@ async def list_risk(
         ),
         cover AS (
             SELECT
-                cs.facility_id,
-                cs.drug_id,
+                f.id AS facility_id,
+                d.id AS drug_id,
                 CASE
+                    WHEN COALESCE(cs.total_qty, 0) <= 0 THEN 0
                     WHEN b.burn_rate > 0 THEN cs.total_qty / b.burn_rate
                     ELSE NULL
                 END AS days_of_cover
-            FROM current_stock cs
-            LEFT JOIN burn b ON cs.facility_id = b.facility_id
-                            AND cs.drug_id = b.drug_id
+            FROM facilities f
+            CROSS JOIN drugs d
+            LEFT JOIN current_stock cs ON cs.facility_id = f.id AND cs.drug_id = d.id
+            LEFT JOIN burn b ON b.facility_id = f.id AND b.drug_id = d.id
+            WHERE d.is_essential = true
+              AND (CAST(:district AS text) IS NULL OR f.district = :district)
         )
         SELECT COUNT(*)
         FROM cover c
@@ -533,7 +560,96 @@ async def list_risk(
             status=days_of_cover_status(dts_float),
         ))
 
-    return RiskListResponse(items=items, total=total)
+    # Phase 5: inject capacity bottleneck items (staff/bed)
+    capacity_q = text("""
+        SELECT cs.facility_id, f.name AS facility_name,
+               cs.staff_score, cs.bed_score, cs.medicine_score, cs.cbi, cs.bottleneck
+        FROM capacity_scores cs
+        JOIN facilities f ON f.id = cs.facility_id
+        WHERE cs.cbi <= 0.5
+          AND (CAST(:district AS text) IS NULL OR f.district = :district)
+        ORDER BY cs.cbi ASC
+    """)
+    try:
+        cap_res = await db.execute(capacity_q, {"district": district})
+        cap_rows = cap_res.mappings().all()
+
+        for cr in cap_rows:
+            # Check staff bottleneck
+            if cr["staff_score"] <= 0.5 or cr["bottleneck"] == "staff":
+                # Check which staff role is missing
+                staff_q = text("""
+                    SELECT role, present, required
+                    FROM staff_daily
+                    WHERE facility_id = :fid
+                    ORDER BY date DESC
+                """)
+                staff_res = await db.execute(staff_q, {"fid": cr["facility_id"]})
+                staff_rows = staff_res.mappings().all()
+
+                missing_roles = []
+                seen = set()
+                for sr in staff_rows:
+                    if sr["role"] not in seen:
+                        seen.add(sr["role"])
+                        if sr["present"] == 0:
+                            missing_roles.append(sr["role"])
+                
+                # Re-apply inference rule for risk driver string
+                dispense_check = text("""
+                    SELECT COUNT(*)
+                    FROM transactions
+                    WHERE facility_id = :fid
+                      AND type = 'dispense'
+                      AND occurred_at >= ((SELECT MAX(occurred_at) FROM transactions) - INTERVAL '1 day')
+                """)
+                disp_res = await db.execute(dispense_check, {"fid": cr["facility_id"]})
+                if disp_res.scalar() == 0 and "pharmacist" not in missing_roles:
+                    missing_roles.append("pharmacist")
+
+                # Get total stock value (approximate)
+                stock_q = text("""
+                    SELECT COALESCE(SUM(quantity), 0) AS total_stock
+                    FROM stock WHERE facility_id = :fid
+                """)
+                stock_res = await db.execute(stock_q, {"fid": cr["facility_id"]})
+                total_stock = stock_res.scalar() or 0
+
+                if "pharmacist" in missing_roles:
+                    driver = f"no pharmacist — {total_stock:,} units stock undispensable"
+                else:
+                    driver = f"missing: {', '.join(missing_roles)}"
+
+                items.insert(0, RiskItem(
+                    facility_id=cr["facility_id"],
+                    facility_name=cr["facility_name"],
+                    drug_id=None,
+                    drug_name=None,
+                    days_to_stockout=0,
+                    confidence=1.0,
+                    driver=driver,
+                    bottleneck="staff",
+                    status="critical",
+                ))
+                
+            # Check beds bottleneck
+            if cr["bed_score"] <= 0.5 or cr["bottleneck"] == "beds":
+                driver = f"bed occupancy critical — score {round(cr['bed_score'] * 100)}%"
+                items.insert(0, RiskItem(
+                    facility_id=cr["facility_id"],
+                    facility_name=cr["facility_name"],
+                    drug_id=None,
+                    drug_name=None,
+                    days_to_stockout=0,
+                    confidence=1.0,
+                    driver=driver,
+                    bottleneck="beds",
+                    status="critical",
+                ))
+    except Exception:
+        pass  # Capacity data is best-effort; don't break risk queue
+
+    return RiskListResponse(items=items, total=total + len([i for i in items if i.bottleneck != "medicine"]))
 
 
 # ---------------------------------------------------------------------------
@@ -1617,3 +1733,402 @@ async def list_transfers(
 
     return TransferListResponse(items=items, total=total)
 
+
+# ===========================================================================
+# PHASE 5 — Capacity endpoints
+# ===========================================================================
+
+from schemas import (
+    CapacityResponse,
+    SpilloverTarget,
+    BedEventRequest,
+    BedEventResponse,
+    StaffCheckinRequest,
+    StaffCheckinResponse,
+)
+from datetime import date as date_type, datetime as dt_type
+
+
+# ---------------------------------------------------------------------------
+# GET /api/capacity — CBI computation
+# ---------------------------------------------------------------------------
+
+@router.get("/capacity")
+async def get_capacity(
+    facility_id: Optional[int] = Query(None, alias="facilityId"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compute capacity scores for one or all facilities.
+    CBI = min(medicine_score, bed_score, staff_score).
+    Bottleneck = which of the three was the minimum.
+
+    Medicine score: pct of essential drugs with days_of_cover > 15.
+    If no pharmacist is present, medicine_score drops to 0 (stock undispensable).
+
+    Bed score: free_beds / beds_total (1.0 if beds_total == 0).
+
+    Staff score: critical_roles_present / critical_roles_required.
+    Critical roles: doctor, pharmacist.
+    """
+    # Get facilities
+    if facility_id:
+        fac_res = await db.execute(
+            text("SELECT * FROM facilities WHERE id = CAST(:fid AS integer)"),
+            {"fid": facility_id},
+        )
+    else:
+        fac_res = await db.execute(text("SELECT * FROM facilities"))
+
+    facilities = fac_res.mappings().all()
+    if not facilities:
+        raise HTTPException(status_code=404, detail="Facility not found")
+
+    results = []
+
+    for fac in facilities:
+        fid = fac["id"]
+
+        # --- Medicine score ---
+        med_query = text("""
+            WITH burn AS (
+                SELECT
+                    t.drug_id,
+                    COALESCE(SUM(t.quantity), 0)::float / 30.0 AS burn_rate
+                FROM transactions t
+                WHERE t.facility_id = :fid
+                  AND t.type = 'dispense'
+                  AND t.occurred_at >= (
+                      (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '30 days'
+                  )
+                GROUP BY t.drug_id
+            ),
+            current_stock AS (
+                SELECT
+                    s.drug_id,
+                    SUM(s.quantity) AS total_qty
+                FROM stock s
+                WHERE s.facility_id = :fid
+                GROUP BY s.drug_id
+            ),
+            essential_cover AS (
+                SELECT
+                    d.id AS drug_id,
+                    COALESCE(
+                        fc.days_to_stockout,
+                        CASE
+                            WHEN b.burn_rate > 0 THEN cs.total_qty / b.burn_rate
+                            ELSE NULL
+                        END
+                    ) AS days_of_cover
+                FROM drugs d
+                LEFT JOIN current_stock cs ON cs.drug_id = d.id
+                LEFT JOIN burn b ON b.drug_id = d.id
+                LEFT JOIN forecasts fc ON fc.drug_id = d.id AND fc.facility_id = :fid
+                WHERE d.is_essential = true
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE days_of_cover > 15 OR days_of_cover IS NULL) AS healthy_count,
+                COUNT(*) AS total_count
+            FROM essential_cover
+        """)
+        med_res = await db.execute(med_query, {"fid": fid})
+        med_row = med_res.mappings().first()
+
+        if med_row["total_count"] > 0:
+            medicine_score = round(med_row["healthy_count"] / med_row["total_count"], 4)
+        else:
+            medicine_score = 1.0
+
+        # --- Staff score ---
+        # Get most recent staff_daily record for this facility
+        staff_query = text("""
+            SELECT role, present, required
+            FROM staff_daily
+            WHERE facility_id = :fid
+            ORDER BY date DESC
+        """)
+        staff_res = await db.execute(staff_query, {"fid": fid})
+        staff_rows = staff_res.mappings().all()
+
+        staff_present = {}
+        staff_required = {}
+        seen_roles = set()
+        for sr in staff_rows:
+            role = sr["role"]
+            if role not in seen_roles:
+                seen_roles.add(role)
+                staff_present[role] = sr["present"]
+                staff_required[role] = sr["required"]
+
+        # Staff inference: if no dispenses today, infer pharmacist absent
+        dispense_check = text("""
+            SELECT COUNT(*) AS cnt
+            FROM transactions
+            WHERE facility_id = :fid
+              AND type = 'dispense'
+              AND occurred_at >= (
+                  (SELECT MAX(occurred_at) FROM transactions) - INTERVAL '1 day'
+              )
+        """)
+        disp_res = await db.execute(dispense_check, {"fid": fid})
+        disp_count = disp_res.scalar() or 0
+
+        if disp_count == 0 and "pharmacist" in staff_present:
+            # Inferred: no dispensing activity implies no pharmacist
+            staff_present["pharmacist"] = 0
+
+        # Critical roles: doctor and pharmacist
+        critical_roles = ["doctor", "pharmacist"]
+        critical_present = sum(min(staff_present.get(r, 0), staff_required.get(r, 1)) for r in critical_roles)
+        critical_required = sum(staff_required.get(r, 1) for r in critical_roles)
+
+        if critical_required > 0:
+            staff_score = round(critical_present / critical_required, 4)
+        else:
+            staff_score = 1.0
+
+        # --- Bed score ---
+        beds_total = fac["beds_total"] or 0
+
+        if beds_total > 0:
+            # Occupancy derived from events: admits - discharges
+            bed_query = text("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN type = 'admit' THEN 1 ELSE 0 END), 0) AS admits,
+                    COALESCE(SUM(CASE WHEN type = 'discharge' THEN 1 ELSE 0 END), 0) AS discharges
+                FROM bed_events
+                WHERE facility_id = :fid
+            """)
+            bed_res = await db.execute(bed_query, {"fid": fid})
+            bed_row = bed_res.mappings().first()
+
+            admits = bed_row["admits"]
+            discharges = bed_row["discharges"]
+            beds_occupied = max(0, min(admits - discharges, beds_total))
+
+            bed_score = round((beds_total - beds_occupied) / beds_total, 4)
+        else:
+            beds_occupied = 0
+            bed_score = 1.0
+
+        # --- Days to saturation ---
+        days_to_saturation = None
+        if beds_total > 0 and beds_occupied < beds_total:
+            # Admission rate: recent 7 days
+            admit_rate_q = text("""
+                SELECT COUNT(*)::float / 7.0 AS daily_admits
+                FROM bed_events
+                WHERE facility_id = :fid
+                  AND type = 'admit'
+                  AND occurred_at >= (
+                      (SELECT MAX(occurred_at) FROM bed_events) - INTERVAL '7 days'
+                  )
+            """)
+            admit_res = await db.execute(admit_rate_q, {"fid": fid})
+            daily_admits = admit_res.scalar() or 0
+
+            discharge_rate_q = text("""
+                SELECT COUNT(*)::float / 7.0 AS daily_discharges
+                FROM bed_events
+                WHERE facility_id = :fid
+                  AND type = 'discharge'
+                  AND occurred_at >= (
+                      (SELECT MAX(occurred_at) FROM bed_events) - INTERVAL '7 days'
+                  )
+            """)
+            discharge_res = await db.execute(discharge_rate_q, {"fid": fid})
+            daily_discharges = discharge_res.scalar() or 0
+
+            net_rate = daily_admits - daily_discharges
+            if net_rate > 0:
+                days_to_saturation = round((beds_total - beds_occupied) / net_rate, 1)
+
+        # --- Spillover: nearest facility with free beds ---
+        spillover_to = None
+        if beds_total > 0 and beds_occupied >= beds_total * 0.9:
+            spill_q = text("""
+                WITH fac_beds AS (
+                    SELECT f.id, f.name, f.lat, f.lng,
+                        f.beds_total - COALESCE(
+                            (SELECT SUM(CASE WHEN be.type = 'admit' THEN 1 ELSE -1 END)
+                             FROM bed_events be WHERE be.facility_id = f.id), 0
+                        ) AS free_beds
+                    FROM facilities f
+                    WHERE f.id != :fid
+                      AND f.beds_total > 0
+                )
+                SELECT id, name, free_beds,
+                    SQRT(POW(lat - :lat, 2) + POW(lng - :lng, 2)) AS dist
+                FROM fac_beds
+                WHERE free_beds > 0
+                ORDER BY dist ASC
+                LIMIT 1
+            """)
+            try:
+                spill_res = await db.execute(spill_q, {"fid": fid, "lat": fac["lat"], "lng": fac["lng"]})
+                spill_row = spill_res.mappings().first()
+                if spill_row:
+                    spillover_to = SpilloverTarget(
+                        facility_id=spill_row["id"],
+                        name=spill_row["name"],
+                    )
+            except Exception:
+                pass  # Spillover is best-effort
+
+        # --- CBI: min of three ---
+        scores = {
+            "medicine": medicine_score,
+            "beds": bed_score,
+            "staff": staff_score,
+        }
+        cbi = min(scores.values())
+        
+        # If pharmacist is absent, the root cause is staff, even if medicine_score drops to 0
+        if staff_present.get("pharmacist", 1) == 0:
+            bottleneck = "staff"
+        else:
+            bottleneck = min(scores, key=scores.get)
+
+        # Write to capacity_scores table (upsert)
+        upsert_q = text("""
+            INSERT INTO capacity_scores (facility_id, computed_at, medicine_score, bed_score, staff_score, cbi, bottleneck)
+            VALUES (:fid, NOW(), :med, :bed, :staff, :cbi, :bottleneck)
+            ON CONFLICT (facility_id) DO UPDATE SET
+                computed_at = NOW(),
+                medicine_score = :med,
+                bed_score = :bed,
+                staff_score = :staff,
+                cbi = :cbi,
+                bottleneck = :bottleneck
+        """)
+        try:
+            await db.execute(upsert_q, {
+                "fid": fid, "med": medicine_score, "bed": bed_score,
+                "staff": staff_score, "cbi": cbi, "bottleneck": bottleneck,
+            })
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            # If upsert fails (no unique constraint), try insert
+            try:
+                insert_q = text("""
+                    INSERT INTO capacity_scores (facility_id, computed_at, medicine_score, bed_score, staff_score, cbi, bottleneck)
+                    VALUES (:fid, NOW(), :med, :bed, :staff, :cbi, :bottleneck)
+                """)
+                await db.execute(insert_q, {
+                    "fid": fid, "med": medicine_score, "bed": bed_score,
+                    "staff": staff_score, "cbi": cbi, "bottleneck": bottleneck,
+                })
+                await db.commit()
+            except Exception:
+                await db.rollback()
+
+        results.append(CapacityResponse(
+            facility_id=fid,
+            facility_name=fac["name"],
+            medicine_score=medicine_score,
+            bed_score=bed_score,
+            staff_score=staff_score,
+            cbi=cbi,
+            bottleneck=bottleneck,
+            beds_total=beds_total,
+            beds_occupied=beds_occupied,
+            days_to_saturation=days_to_saturation,
+            spillover_to=spillover_to,
+            staff_present=staff_present,
+            staff_required=staff_required,
+        ))
+
+    if facility_id:
+        return results[0]
+    return results
+
+
+# ---------------------------------------------------------------------------
+# POST /api/bed-events
+# ---------------------------------------------------------------------------
+
+@router.post("/bed-events", response_model=BedEventResponse)
+async def create_bed_event(
+    req: BedEventRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Record an admit or discharge event.
+    Occupancy is derived from events — never directly editable.
+    """
+    if req.type not in ("admit", "discharge"):
+        raise HTTPException(status_code=400, detail="type must be 'admit' or 'discharge'")
+
+    # Verify facility exists
+    fac_res = await db.execute(
+        text("SELECT id FROM facilities WHERE id = CAST(:fid AS integer)"),
+        {"fid": req.facility_id},
+    )
+    if not fac_res.first():
+        raise HTTPException(status_code=404, detail="Facility not found")
+
+    insert_q = text("""
+        INSERT INTO bed_events (facility_id, type, occurred_at, recorded_at)
+        VALUES (:fid, :type, NOW(), NOW())
+        RETURNING id, facility_id, type, occurred_at
+    """)
+    result = await db.execute(insert_q, {"fid": req.facility_id, "type": req.type})
+    await db.commit()
+    row = result.mappings().first()
+
+    return BedEventResponse(
+        id=row["id"],
+        facility_id=row["facility_id"],
+        type=row["type"],
+        occurred_at=str(row["occurred_at"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/staff-checkin
+# ---------------------------------------------------------------------------
+
+@router.post("/staff-checkin", response_model=StaffCheckinResponse)
+async def staff_checkin(
+    req: StaffCheckinRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Record staff role counts. Never individual identities.
+    Source = "checkin" to distinguish from system/inferred.
+    """
+    valid_roles = ["doctor", "pharmacist", "nurse", "anm", "lab"]
+    if req.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"role must be one of {valid_roles}")
+
+    # Verify facility exists
+    fac_res = await db.execute(
+        text("SELECT id FROM facilities WHERE id = CAST(:fid AS integer)"),
+        {"fid": req.facility_id},
+    )
+    if not fac_res.first():
+        raise HTTPException(status_code=404, detail="Facility not found")
+
+    insert_q = text("""
+        INSERT INTO staff_daily (facility_id, date, role, required, present, source)
+        VALUES (:fid, CURRENT_DATE, :role, :required, :present, 'checkin')
+        RETURNING id, facility_id, role, present, required
+    """)
+    result = await db.execute(insert_q, {
+        "fid": req.facility_id,
+        "role": req.role,
+        "required": req.required,
+        "present": req.present,
+    })
+    await db.commit()
+    row = result.mappings().first()
+
+    return StaffCheckinResponse(
+        id=row["id"],
+        facility_id=row["facility_id"],
+        role=row["role"],
+        present=row["present"],
+        required=row["required"],
+    )

@@ -279,6 +279,10 @@ class CapacityScore(Base):
         nullable=True,
     )
 
+    __table_args__ = (
+        UniqueConstraint("facility_id", name="uq_capacity_scores_facility"),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Federation (Phase 6)

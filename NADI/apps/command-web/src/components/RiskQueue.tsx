@@ -13,8 +13,15 @@ interface RiskQueueProps {
 /**
  * Risk queue — ranked list, clickable.
  * Sorted ascending by days remaining (server-side).
- * Phase 2: shows confidence badge and driver string.
+ * Phase 5: shows bottleneck icons (medicine/beds/staff).
  */
+
+const BOTTLENECK_ICONS: Record<string, string> = {
+  medicine: '💊',
+  beds: '🛏️',
+  staff: '👤',
+};
+
 export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, onSelect }: RiskQueueProps) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
@@ -90,8 +97,24 @@ export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, 
               >
                 <span className={`status-dot status-dot--${group.worstStatus}`} />
                 <div className="risk-queue__item-info">
-                  <div className="risk-queue__facility">{group.facilityName}</div>
-                  <div className="risk-queue__drug">{group.items.length} medicines in shortage</div>
+                  <div className="risk-queue__facility">
+                    {BOTTLENECK_ICONS[group.items[0]?.bottleneck || 'medicine'] || '💊'}{' '}
+                    {group.facilityName}
+                  </div>
+                  <div className="risk-queue__drug">
+                    {(() => {
+                      const capacityCount = group.items.filter(i => i.bottleneck !== 'medicine').length;
+                      const medicineCount = group.items.filter(i => i.bottleneck === 'medicine').length;
+                      
+                      if (capacityCount > 0 && medicineCount > 0) {
+                        return `${capacityCount} capacity issue(s), ${medicineCount} medicine(s)`;
+                      } else if (capacityCount > 0) {
+                        return `${capacityCount} capacity issue(s)`;
+                      } else {
+                        return `${medicineCount} medicine(s) in shortage`;
+                      }
+                    })()}
+                  </div>
                 </div>
                 <div className="risk-queue__right">
                   <div className="risk-queue__days">
@@ -122,9 +145,12 @@ export function RiskQueue({ items, loading, selectedFacilityId, selectedDrugId, 
                       >
                         <div className="risk-queue__item-info">
                           <div className="risk-queue__drug" style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                            {item.drugName}
+                            {item.bottleneck !== 'medicine'
+                              ? <><span className="risk-queue__bottleneck-icon">{BOTTLENECK_ICONS[item.bottleneck]}</span>{item.driver}</>
+                              : item.drugName
+                            }
                           </div>
-                          {item.driver && (
+                          {item.bottleneck === 'medicine' && item.driver && (
                             <div className="risk-queue__driver">{item.driver}</div>
                           )}
                         </div>

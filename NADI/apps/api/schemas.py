@@ -46,6 +46,8 @@ class FacilityItem(CamelModel):
     beds_total: int = 0
     cold_chain_capable: bool = False
     population_served: int = 0
+    cbi: Optional[float] = None
+    bottleneck: Optional[str] = None
 
 
 class FacilityListResponse(CamelModel):
@@ -117,12 +119,12 @@ class StockListResponse(CamelModel):
 class RiskItem(CamelModel):
     facility_id: int
     facility_name: str
-    drug_id: int
-    drug_name: str
+    drug_id: Optional[int] = None
+    drug_name: Optional[str] = None
     days_to_stockout: Optional[float] = None
     confidence: Optional[float] = None
     driver: Optional[str] = None
-    bottleneck: str = "medicine"  # Phase 1: always medicine
+    bottleneck: str = "medicine"
     status: str
 
 
@@ -308,3 +310,56 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Capacity
+# ---------------------------------------------------------------------------
+
+class SpilloverTarget(CamelModel):
+    facility_id: int
+    name: str
+
+
+class CapacityResponse(CamelModel):
+    facility_id: int
+    facility_name: str
+    medicine_score: float
+    bed_score: float
+    staff_score: float
+    cbi: float
+    bottleneck: str  # "medicine" | "beds" | "staff"
+    beds_total: int
+    beds_occupied: int
+    days_to_saturation: Optional[float] = None
+    spillover_to: Optional[SpilloverTarget] = None
+    staff_present: dict  # {"doctor": 1, "pharmacist": 0, ...}
+    staff_required: dict
+
+
+class BedEventRequest(CamelModel):
+    facility_id: int
+    type: str  # "admit" | "discharge"
+
+
+class BedEventResponse(CamelModel):
+    id: int
+    facility_id: int
+    type: str
+    occurred_at: str
+
+
+class StaffCheckinRequest(CamelModel):
+    facility_id: int
+    role: str
+    present: int
+    required: int = 1
+
+
+class StaffCheckinResponse(CamelModel):
+    id: int
+    facility_id: int
+    role: str
+    present: int
+    required: int
+

@@ -120,6 +120,10 @@ export function MapView({ facilities, selectedFacilityId, onSelectFacility }: Ma
       });
 
       // Popup on hover
+      const cbiText = facility.cbi != null
+        ? `<span style="color:${color}; font-weight:700;">${Math.round(facility.cbi * 100)}%</span><span style="color:#94a3b8;"> CBI</span>`
+        : `<span style="color:${color}; font-weight:700;">${facility.worstDaysOfCover != null ? Math.round(facility.worstDaysOfCover) + ' days' : '—'}</span><span style="color:#94a3b8;"> cover</span>`;
+
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
@@ -129,10 +133,7 @@ export function MapView({ facilities, selectedFacilityId, onSelectFacility }: Ma
           <div class="map-popup__name">${facility.name}</div>
           <div class="map-popup__type">${facility.type.toUpperCase()}</div>
           <div style="margin-top:6px; font-size:0.8rem;">
-            <span style="color:${color}; font-weight:700;">
-              ${facility.worstDaysOfCover != null ? Math.round(facility.worstDaysOfCover) + ' days' : '—'}
-            </span>
-            <span style="color:#94a3b8;"> cover</span>
+            ${cbiText}
           </div>
         </div>
       `);
