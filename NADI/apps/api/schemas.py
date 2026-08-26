@@ -256,6 +256,48 @@ class TransferListResponse(CamelModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 — Scan & Sync
+# ---------------------------------------------------------------------------
+
+class ScannedRow(CamelModel):
+    drug_id: Optional[int] = None
+    matched_name: Optional[str] = None
+    raw_text: str
+    batch_no: str
+    quantity: int
+    expiry_date: str
+    confidence: float
+    uncertain_fields: List[str] = []
+
+
+class ScanResponse(CamelModel):
+    rows: List[ScannedRow]
+
+
+class ScanConfirmRequest(CamelModel):
+    rows: List[ScannedRow]
+
+
+class MutationItem(CamelModel):
+    client_id: str
+    type: str
+    facility_id: int
+    drug_id: int
+    quantity: int
+    occurred_at: datetime
+    batch_no: Optional[str] = None
+
+
+class SyncRequest(CamelModel):
+    mutations: List[MutationItem]
+
+
+class SyncResponse(CamelModel):
+    applied: int
+    conflicts: int
+
+
+# ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
 

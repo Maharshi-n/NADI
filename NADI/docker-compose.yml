@@ -25,6 +25,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://nadi:nadi@db:5432/nadi
       DATABASE_URL_SYNC: postgresql://nadi:nadi@db:5432/nadi
       ENVIRONMENT: development
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     volumes:
       - ./ml:/ml
       - ./data:/data

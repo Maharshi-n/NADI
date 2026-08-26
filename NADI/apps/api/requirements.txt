@@ -8,3 +8,5 @@ pydantic-settings==2.3.4
 python-dotenv==1.0.1
 alembic==1.13.1
 ortools
+google-generativeai
+python-multipart

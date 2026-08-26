@@ -13,6 +13,8 @@ from datetime import date, datetime
 
 # Add apps/api to path for model imports
 API_DIR = os.path.join(os.path.dirname(__file__), "..", "apps", "api")
+if not os.path.exists(API_DIR) and os.path.exists("/app/db.py"):
+    API_DIR = "/app"
 sys.path.insert(0, os.path.abspath(API_DIR))
 
 from db import sync_engine, SyncSessionLocal

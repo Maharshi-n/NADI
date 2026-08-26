@@ -7,9 +7,9 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 4 - PHC app
-**Status:** Phase 4 starting. Phase 3 (Optimiser / Transfer Planner) is fully complete, including the missing database constraints for `forecasts` table which were causing 500 errors in the outbreak scenario.
-**Last updated:** 2026-08-26 by session-2026-08-26-a
+**Phase:** 5 - Capacity & Referrals
+**Status:** Phase 4 (PHC app) is fully complete. Gemini Vision API register scanning is fixed and tested.
+**Last updated:** 2026-08-26 by session-2026-08-26-c
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -23,13 +23,16 @@ session. Append to the log. Never let this drift from reality.
 - **RiskQueue** shows confidence and driver from Phase 2 data when available.
 - **Phase 3 Transfer Planner** (`TransferPlanner.tsx`): MapLibre integration showing directional transfer lines (`TransferMap`), an interactive impact panel (`ImpactPanel`), and a transfer approval list (`TransferTable`).
 - **Phase 3 Backend API**: `POST /api/plan` runs the OR-Tools optimizer, and `POST /api/transfers/approve` persists transfers into PostgreSQL. `test_phase3.py` passes all verification checks.
+- **Phase 4 PHC App**: Vite React PWA setup (`apps/phc-app`) with TailwindCSS, Lucide icons, Dexie for offline IndexedDB storage.
+- **Phase 4 Scanning**: Gemini Vision integration via `/api/scan` for register ingestion and fuzzy matching, with offline mutation queueing logic.
 - TypeScript compiles with zero errors.
 
 **Broken / needs fixing first:**
-- None.
+- `/api/scan/confirm` crashes with 500 error on empty expiry dates (fails SQL CAST).
+- Scan UI needs editable rows and a dropdown to map unrecognized drugs to the master list.
 
 **Next task, precisely:**
-1. Start Phase 4 (PHC app) which involves building the offline PWA, camera ingestion, and Gemini-based register parsing.
+1. Start Phase 5 (Capacity & Referrals). Add BedEvents and StaffDaily endpoints to integrate facility capacities.
 
 ---
 
@@ -37,7 +40,7 @@ session. Append to the log. Never let this drift from reality.
 
 Format: `- [session-id] area — paths you will touch`
 
-- (none)
+- [session-2026-08-26-d] Capacity — apps/api/**, apps/web/**
 
 ---
 
@@ -79,6 +82,18 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-26 — session-2026-08-26-c
+- **Did:** Fixed Gemini API scan endpoint 404 error by migrating to `gemini-3.1-flash-lite`. Fixed UI bug where CBI score circle showed 100% full instead of 60% by switching from solid border to conic-gradient. Stopped all backend and frontend dev servers.
+- **Decided:** Migrated to Gemini 3.1 Flash Lite for API compatibility (ADR-014). Used conic-gradient for circular progress bars instead of SVGs (ADR-015).
+- **Left broken:** None.
+- **Next session should:** Begin Phase 5 (Capacity & Referrals).
+
+### 2026-08-26 — session-2026-08-26-b
+- **Did:** Fixed 500 error in outbreak scenario (added missing UNIQUE constraint to `forecasts` table). Built Phase 4 PHC app using Vite, React, Tailwind, and Dexie for offline sync. Integrated Gemini API for parsing register scans. Added `/api/scan` and `/api/sync` endpoints.
+- **Decided:** Used TailwindCSS for mobile styling (ADR-012) and Vite PWA plugin with `generateSW` strategy (ADR-013).
+- **Left broken:** None. Phase 4 is complete.
+- **Next session should:** Begin Phase 5 (Capacity & Referrals).
 
 ### 2026-08-26 — session-2026-08-26-a
 - **Did:** Fixed Phase 3 backend import and SQL casting bugs. Verified `test_phase3.py` passes. Built Phase 3 frontend components: `TransferPlanner`, `TransferMap`, `ImpactPanel`, and `TransferTable`. Integrated frontend with the `generatePlan` and `approveTransfers` API endpoints.

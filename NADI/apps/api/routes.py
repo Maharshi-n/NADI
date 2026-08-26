@@ -14,7 +14,10 @@ import os
 import sys
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
+import json
+import difflib
+import google.generativeai as genai
 from sqlalchemy import text, func, select, case, literal_column, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -848,7 +851,7 @@ async def fire_scenario(
     """
     from datetime import date as date_type, timedelta
     
-    condition = request.condition
+    condition = request.condition.lower() if request.condition else request.condition
     multiplier = request.multiplier
     district = request.district
     
@@ -894,7 +897,7 @@ async def fire_scenario(
         
         insert_query = text("""
             INSERT INTO disease_signal (district, condition, week_start, case_count, source)
-            VALUES (CAST(:district AS text), CAST(:condition AS text), CAST(:week_start AS date), CAST(:case_count AS integer), 'scenario')
+            VALUES (CAST(:district AS text), CAST(:condition AS text), CAST(:week_start AS date), CAST(:case_count AS integer), CAST(:source AS text))
         """)
         await db.execute(insert_query, {
             "district": district,
@@ -1256,6 +1259,198 @@ async def generate_plan(
         transfers=transfer_items,
         impact=impact_item,
     )
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Scan and Sync
+# ---------------------------------------------------------------------------
+
+@router.post("/scan", response_model=dict)
+async def scan_register(image: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    """
+    Scan a paper register using Gemini API.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or api_key in ["your-key-here", "your_api_key_here"]:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured in backend .env file")
+        
+    genai.configure(api_key=api_key)
+    
+    try:
+        image_bytes = await image.read()
+        model = genai.GenerativeModel('gemini-3.1-flash-lite', generation_config={"response_mime_type": "application/json"})
+        
+        prompt = '''
+        You are a medical data extraction assistant. Extract rows of drug stock information from this register image.
+        Return ONLY a JSON array of objects. Each object must have:
+        - raw_text: The raw text of the drug name exactly as written
+        - batch_no: The batch number
+        - quantity: The quantity (integer)
+        - expiry_date: The expiry date (YYYY-MM-DD format)
+        - confidence: A confidence score between 0.0 and 1.0 representing how clearly you could read this row
+        - uncertain_fields: An array of strings representing field names (like "quantity", "batchNo", "expiryDate") that were hard to read or blurry.
+        If you are unsure of a field, make your best guess but include it in uncertain_fields.
+        '''
+        
+        response = await model.generate_content_async([
+            prompt,
+            {"mime_type": image.content_type or "image/jpeg", "data": image_bytes}
+        ])
+        
+        extracted_data = json.loads(response.text)
+    except Exception as e:
+        print(f"Gemini API Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process image with Gemini")
+        
+    # Fetch all drugs to fuzzy match
+    drugs_query = text("SELECT id, name FROM drugs")
+    drugs_res = await db.execute(drugs_query)
+    all_drugs = [{"id": row[0], "name": row[1]} for row in drugs_res.all()]
+    drug_names = [d["name"].lower() for d in all_drugs]
+    
+    rows = []
+    for item in extracted_data:
+        raw_name = item.get("raw_text", "")
+        matched_name = None
+        drug_id = None
+        
+        # Fuzzy match
+        matches = difflib.get_close_matches(raw_name.lower(), drug_names, n=1, cutoff=0.6)
+        if matches:
+            matched_drug = next((d for d in all_drugs if d["name"].lower() == matches[0]), None)
+            if matched_drug:
+                matched_name = matched_drug["name"]
+                drug_id = matched_drug["id"]
+                
+        rows.append({
+            "drugId": drug_id,
+            "matchedName": matched_name,
+            "rawText": raw_name,
+            "batchNo": item.get("batch_no", ""),
+            "quantity": int(item.get("quantity", 0)),
+            "expiryDate": item.get("expiry_date", "2027-01-01"),
+            "confidence": item.get("confidence", 0.9),
+            "uncertainFields": item.get("uncertain_fields", [])
+        })
+        
+    return {"rows": rows}
+
+
+@router.post("/scan/confirm", response_model=dict)
+async def confirm_scan(payload: dict, db: AsyncSession = Depends(get_db)):
+    """
+    Confirm scanned rows and update stock.
+    """
+    rows = payload.get("rows", [])
+    if not rows:
+        return {"status": "success", "updated": 0}
+        
+    try:
+        # We'll just hardcode facility_id=1 (PHC Dhamnod) for the demo
+        facility_id = 1
+        
+        for row in rows:
+            drug_id = row.get("drugId")
+            if not drug_id:
+                continue
+                
+            qty = row.get("quantity", 0)
+            batch = row.get("batchNo", "UNKNOWN")
+            exp = row.get("expiryDate", "2027-01-01")
+            
+            # Upsert into stock
+            upsert_q = text("""
+                INSERT INTO stock (facility_id, drug_id, batch_no, quantity, expiry_date, trust_score)
+                VALUES (:fid, :did, :batch, :qty, CAST(:exp AS date), :trust)
+                ON CONFLICT (facility_id, drug_id) DO UPDATE SET
+                    quantity = stock.quantity + EXCLUDED.quantity,
+                    last_updated = now()
+            """)
+            # Note: the actual ON CONFLICT requires the index ix_stock_facility_drug
+            # But ix_stock_facility_drug is just an index, not a unique constraint!
+            # Let's do a simple update or insert.
+            
+            # Check if exists
+            check_q = text("SELECT id, quantity FROM stock WHERE facility_id = :fid AND drug_id = :did LIMIT 1")
+            existing = await db.execute(check_q, {"fid": facility_id, "did": drug_id})
+            existing_row = existing.first()
+            
+            if existing_row:
+                update_q = text("UPDATE stock SET quantity = quantity + :qty, last_updated = now() WHERE id = :id")
+                await db.execute(update_q, {"qty": qty, "id": existing_row[0]})
+            else:
+                insert_q = text("""
+                    INSERT INTO stock (facility_id, drug_id, batch_no, quantity, expiry_date, trust_score)
+                    VALUES (:fid, :did, :batch, :qty, CAST(:exp AS date), 1.0)
+                """)
+                await db.execute(insert_q, {"fid": facility_id, "did": drug_id, "batch": batch, "qty": qty, "exp": exp})
+                
+            # Add transaction
+            tx_q = text("""
+                INSERT INTO transactions (facility_id, drug_id, batch_no, quantity, type, occurred_at, source)
+                VALUES (:fid, :did, :batch, :qty, 'receive', now(), 'scan')
+            """)
+            await db.execute(tx_q, {"fid": facility_id, "did": drug_id, "batch": batch, "qty": qty})
+            
+        await db.commit()
+        return {"status": "success", "updated": len(rows)}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync", response_model=dict)
+async def sync_mutations(payload: dict, db: AsyncSession = Depends(get_db)):
+    """
+    Sync offline mutations from the PHC app.
+    """
+    mutations = payload.get("mutations", [])
+    if not mutations:
+        return {"applied": 0, "conflicts": 0}
+        
+    applied = 0
+    conflicts = 0
+    
+    try:
+        for m in mutations:
+            fid = m.get("facilityId")
+            did = m.get("drugId")
+            qty = m.get("quantity")
+            mtype = m.get("type", "dispense")
+            batch = m.get("batchNo", "UNKNOWN")
+            
+            # Update stock
+            check_q = text("SELECT id, quantity FROM stock WHERE facility_id = :fid AND drug_id = :did LIMIT 1")
+            existing = await db.execute(check_q, {"fid": fid, "did": did})
+            existing_row = existing.first()
+            
+            if existing_row:
+                new_qty = existing_row[1] - qty if mtype == 'dispense' else existing_row[1] + qty
+                if new_qty < 0: new_qty = 0
+                
+                update_q = text("UPDATE stock SET quantity = :new_qty, last_updated = now() WHERE id = :id")
+                await db.execute(update_q, {"new_qty": new_qty, "id": existing_row[0]})
+            else:
+                if mtype == 'receive':
+                    insert_q = text("""
+                        INSERT INTO stock (facility_id, drug_id, batch_no, quantity, expiry_date, trust_score)
+                        VALUES (:fid, :did, :batch, :qty, now() + interval '1 year', 1.0)
+                    """)
+                    await db.execute(insert_q, {"fid": fid, "did": did, "batch": batch, "qty": qty})
+            
+            # Add transaction
+            tx_q = text("""
+                INSERT INTO transactions (facility_id, drug_id, batch_no, quantity, type, occurred_at, source)
+                VALUES (:fid, :did, :batch, :qty, :type, now(), 'sync')
+            """)
+            await db.execute(tx_q, {"fid": fid, "did": did, "batch": batch, "qty": qty, "type": mtype})
+            
+            applied += 1
+            
+        await db.commit()
+        return {"applied": applied, "conflicts": conflicts}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/transfers/approve", response_model=ApproveTransfersResponse)

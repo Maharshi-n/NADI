@@ -119,5 +119,32 @@ workflow: generate then seed.
 **Date:** 2026-08-25 | **Session:** session-2026-08-25-d | **Status:** accepted
 **Context:** The outbreak factor compares recent disease signal case counts to baseline. Extreme ratios (e.g., baseline near zero) can produce absurd forecasts.
 **Decision:** Cap the outbreak factor at 5x and require a minimum baseline of 5 cases. Display the capped percentage in driver strings.
-**Rejected:** Uncapped factors — led to "Dengue +17M%" in testing when baseline was near-zero. Also rejected logarithmic scaling — harder to explain to CMHO users.
 **Consequence:** Forecasts never inflate beyond 5x from outbreak alone. Combined with season factor, total inflation is bounded and human-readable.
+
+## ADR-012 — Tailwind CSS for PHC app
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-b | **Status:** accepted
+**Context:** Phase 4 requires building a React PWA for the PHC app. The command-web dashboard used custom CSS for glassmorphism. We need to style the new app rapidly.
+**Decision:** Use Tailwind CSS for the PHC app, adhering to CONTEXT.md's stack choice.
+**Rejected:** Custom CSS — too slow for rapid prototyping of complex mobile UIs.
+**Consequence:** The PHC app will have Tailwind utilities, which may not share CSS classes with command-web, but speeds up development.
+
+## ADR-013 — GenerateSW for Vite PWA
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-b | **Status:** accepted
+**Context:** The PHC app must work offline. We need a service worker.
+**Decision:** Use `vite-plugin-pwa` with `generateSW` strategy.
+**Rejected:** Hand-rolling a service worker or using `injectManifest`. Hand-rolling is error-prone. `injectManifest` is more flexible but unnecessary for a simple app shell and API caching.
+**Consequence:** Offline caching of static assets is handled automatically. API requests for sync will still require custom logic in IndexedDB (Dexie).
+
+## ADR-014 — Upgrade to gemini-3.1-flash-lite
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-c | **Status:** accepted
+**Context:** The `gemini-1.5-flash` model returned a 404 error because the older 1.5 strings were deprecated from the active SDK model availability list in the 2026 timeframe.
+**Decision:** Upgrade the `POST /api/scan` endpoint to use `gemini-3.1-flash-lite`.
+**Rejected:** Attempting to force-downgrade the `google-generativeai` SDK, which would re-introduce environment conflicts and instability.
+**Consequence:** Better vision performance at slightly different latency metrics.
+
+## ADR-015 — Conic-gradient for circular progress in Tailwind
+**Date:** 2026-08-26 | **Session:** session-2026-08-26-c | **Status:** accepted
+**Context:** Needed a circular progress indicator (CBI score) in the PHC React app. Using `border-8` draws a solid circle (100% full regardless of value).
+**Decision:** Use an inline `conic-gradient` style applied to a Tailwind `rounded-full` div.
+**Rejected:** SVG with `stroke-dasharray` and `stroke-dashoffset`. SVG is technically more robust but significantly more verbose in a simple React component that doesn't need to scale dynamically.
+**Consequence:** Simple, performant CSS-only circle fill that is easy to template dynamically in JSX.
