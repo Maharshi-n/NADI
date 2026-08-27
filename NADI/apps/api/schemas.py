@@ -419,3 +419,27 @@ class DataTrustStatusResponse(CamelModel):
     anomalies_detected: int
     ledger_hashes_computed: int
 
+# ---------------------------------------------------------------------------
+# Phase 8 — War Room / Twin Simulation
+# ---------------------------------------------------------------------------
+
+class TwinSimulateRequest(CamelModel):
+    condition: str
+    multiplier: float = 3.0
+    district: str = "Dhar"
+    start_week: Optional[int] = None
+
+class FragilityItem(CamelModel):
+    facility_id: int
+    facility_name: str
+    risk_score: float
+    days_to_stockout: Optional[int] = None
+
+class CounterfactualImpact(CamelModel):
+    stockout_days_prevented: int
+
+class TwinSimulateResponse(CamelModel):
+    fragility_ranking: List[FragilityItem]
+    first_to_break: List[FragilityItem]
+    counterfactual_impact: CounterfactualImpact
+

@@ -7,9 +7,9 @@ session. Append to the log. Never let this drift from reality.
 
 ## Current state
 
-**Phase:** 7 - Trust
-**Status:** Phase 7 is fully implemented. Anomaly detection (Benford's law, impossible rates, backdated edits) and a simulated hash-chained ledger are working. Detected anomalies surface on the new Data Trust dashboard.
-**Last updated:** 2026-08-26 by session-2026-08-26-h
+**Phase:** 8 - War Room / 9 - Ship
+**Status:** Phase 8 implemented and successfully merged into the main Dashboard as a "Macro (Predict)" mode. The standalone `WarRoom.tsx` tab was removed to unify the command center.
+**Last updated:** 2026-08-27 by session-2026-08-27-a
 
 **Works right now:**
 - Docker compose environment runs properly (`postgres` and `api` working together).
@@ -38,7 +38,7 @@ session. Append to the log. Never let this drift from reality.
 - None.
 
 **Next task, precisely:**
-1. Start Phase 8 (War room) or proceed to Phase 9 (Ship) if out of time.
+1. Submit the hackathon project or perform real deployment if GCP credentials become available.
 
 ---
 
@@ -89,6 +89,12 @@ dependency, a version pin, a workaround.
 ## Session log
 
 Append one block per session. Newest at the top. Keep each to five lines.
+
+### 2026-08-27 — session-2026-08-27-a
+- **Did:** Implemented the Phase 8 War Room backend simulation engine (`ml/twin/simulator.py`). Merged the War Room into the main Dashboard (`Dashboard.tsx` & `ScenarioRunner.tsx`) using a Macro/Micro toggle. Deleted the standalone `WarRoom.tsx` tab for a unified experience. 
+- **Decided:** Merged Macro (War Room) and Micro (Dashboard) simulation modes (ADR-025) into a single Command Center.
+- **Left broken:** None. The repository is ready to ship.
+- **Next session should:** Submit the project or deploy to GCP/Firebase if credentials are provided.
 
 ### 2026-08-26 — session-2026-08-26-h
 - **Did:** Implemented Phase 7 Trust features. Added `ml/anomaly/detector.py` to detect anomalies via Benford's law, impossible rates, and backdated edits, and to compute ledger hashes. Added Trust endpoints to `apps/api/routes.py` and built the `DataTrust.tsx` dashboard.

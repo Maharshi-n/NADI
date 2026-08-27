@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { fireScenario, resetDemo } from '../api/client';
+import { fireScenario, resetDemo, simulateTwin } from '../api/client';
+import type { TwinSimulateResponse, TwinSimulateRequest } from '../api/client';
 
 interface ScenarioRunnerProps {
   onScenarioFired: () => void;
+  onTwinResult?: (res: TwinSimulateResponse | null) => void;
+  onModeChange?: (mode: 'macro' | 'micro') => void;
 }
 
 const CONDITIONS = [
@@ -13,28 +16,45 @@ const CONDITIONS = [
   { value: 'tuberculosis', label: 'Tuberculosis' },
 ];
 
-/**
- * Scenario runner — fire outbreak scenarios and reset.
- * Phase 2: "Run outbreak scenario" wired to the demo endpoint.
- */
-export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
+export function ScenarioRunner({ onScenarioFired, onTwinResult, onModeChange }: ScenarioRunnerProps) {
   const [condition, setCondition] = useState('dengue');
   const [multiplier, setMultiplier] = useState(3);
+  const [mode, setMode] = useState<'macro' | 'micro'>('macro');
   const [firing, setFiring] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+
+  const handleModeSwitch = (newMode: 'macro' | 'micro') => {
+    if (mode === newMode) return; // Prevent double-clicks
+
+    setMode(newMode);
+    if (onModeChange) onModeChange(newMode);
+
+    // Unconditionally trigger a full reset when switching modes.
+    // This clears the Macro results (onTwinResult(null)) AND wipes the DB
+    // (resetDemo()), guaranteeing a perfectly clean "normal" state.
+    handleReset();
+  };
 
   const handleFire = async () => {
     setFiring(true);
     setResult(null);
     try {
-      const res = await fireScenario({
-        condition,
-        multiplier,
-        district: 'Dhar',
-      });
-      setResult(`🔥 ${res.condition} outbreak (${res.multiplier}×) — ${res.affected} facilities affected`);
-      onScenarioFired();
+      if (mode === 'micro') {
+        const res = await fireScenario({
+          condition,
+          multiplier,
+          district: 'Dhar',
+        });
+        setResult(`🔥 ${res.condition} outbreak injected (${res.multiplier}×) — DB altered.`);
+        if (onTwinResult) onTwinResult(null);
+        onScenarioFired();
+      } else {
+        const req: TwinSimulateRequest = { condition, multiplier, district: 'Dhar' };
+        const res = await simulateTwin(req);
+        setResult(`📊 Prediction complete: ${res.counterfactualImpact.stockoutDaysPrevented} stockout days preventable.`);
+        if (onTwinResult) onTwinResult(res);
+      }
     } catch (err) {
       setResult(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
@@ -45,9 +65,10 @@ export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
   const handleReset = async () => {
     setResetting(true);
     setResult(null);
+    if (onTwinResult) onTwinResult(null);
     try {
       await resetDemo();
-      setResult('✓ Seed state restored');
+      setResult('✓ Base state restored');
       onScenarioFired();
     } catch (err) {
       setResult(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -64,6 +85,22 @@ export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
       </div>
 
       <div className="scenario-runner__controls">
+        
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: 'var(--bg-dark)', padding: '4px', borderRadius: '6px' }}>
+          <button 
+            style={{ flex: 1, padding: '6px', borderRadius: '4px', border: 'none', background: mode === 'macro' ? 'var(--accent)' : 'transparent', color: mode === 'macro' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer' }}
+            onClick={() => handleModeSwitch('macro')}
+          >
+            Predict (Macro)
+          </button>
+          <button 
+            style={{ flex: 1, padding: '6px', borderRadius: '4px', border: 'none', background: mode === 'micro' ? 'var(--critical)' : 'transparent', color: mode === 'micro' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer' }}
+            onClick={() => handleModeSwitch('micro')}
+          >
+            Inject (Micro)
+          </button>
+        </div>
+
         <div className="scenario-runner__field">
           <label className="scenario-runner__label" htmlFor="scenario-condition">Condition</label>
           <select
@@ -106,8 +143,9 @@ export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
             className="scenario-runner__btn scenario-runner__btn--fire"
             onClick={handleFire}
             disabled={firing || resetting}
+            style={mode === 'macro' ? { background: 'var(--accent)' } : undefined}
           >
-            {firing ? 'Injecting…' : '🔥 Fire Outbreak'}
+            {firing ? 'Processing…' : (mode === 'macro' ? 'Run Simulation' : '🔥 Inject Outbreak')}
           </button>
           <button
             id="scenario-reset-btn"
@@ -121,7 +159,7 @@ export function ScenarioRunner({ onScenarioFired }: ScenarioRunnerProps) {
       </div>
 
       {result && (
-        <div className={`scenario-runner__result ${result.startsWith('Error') ? 'scenario-runner__result--error' : ''}`}>
+        <div className={`scenario-runner__result ${result.startsWith('Error') ? 'scenario-runner__result--error' : ''}`} style={{ fontSize: '0.85rem' }}>
           {result}
         </div>
       )}

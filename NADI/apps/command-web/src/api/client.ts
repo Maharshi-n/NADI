@@ -348,3 +348,36 @@ export async function runTrustSimulation() {
   if (!res.ok) throw new Error('Failed to run trust simulation');
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8 — War Room / Twin Simulation
+// ---------------------------------------------------------------------------
+
+export interface TwinSimulateRequest {
+  condition: string;
+  multiplier: number;
+  district?: string;
+  startWeek?: number;
+}
+
+export interface FragilityItem {
+  facilityId: number;
+  facilityName: string;
+  riskScore: number;
+  daysToStockout: number | null;
+}
+
+export interface CounterfactualImpact {
+  stockoutDaysPrevented: number;
+}
+
+export interface TwinSimulateResponse {
+  fragilityRanking: FragilityItem[];
+  firstToBreak: FragilityItem[];
+  counterfactualImpact: CounterfactualImpact;
+}
+
+export function simulateTwin(req: TwinSimulateRequest): Promise<TwinSimulateResponse> {
+  return postJSON('/twin/simulate', req as unknown as Record<string, unknown>);
+}
+

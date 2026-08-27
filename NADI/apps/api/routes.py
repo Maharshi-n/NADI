@@ -2324,3 +2324,32 @@ async def run_trust_simulation(
         anomalies_detected=len(anomalies),
         ledger_hashes_computed=len(hashed_txs)
     )
+
+# ===========================================================================
+# PHASE 8 — Twin Simulator
+# ===========================================================================
+
+from schemas import (
+    TwinSimulateRequest,
+    TwinSimulateResponse,
+)
+
+if ML_DIR not in sys.path:
+    sys.path.insert(0, ML_DIR)
+from twin.simulator import run_simulation
+
+@router.post("/twin/simulate", response_model=TwinSimulateResponse)
+async def simulate_twin(
+    request: TwinSimulateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Run a vectorised counterfactual rollout for a scenario.
+    """
+    result = await run_simulation(
+        db=db,
+        district=request.district,
+        condition=request.condition,
+        multiplier=request.multiplier
+    )
+    return TwinSimulateResponse(**result)

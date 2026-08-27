@@ -197,3 +197,24 @@ workflow: generate then seed.
 **Decision:** Compute hashes and run detection dynamically via a dedicated demo trigger endpoint (`/api/demo/trust/run`), similar to federation.
 **Rejected:** In-flight trigger/middleware hash chaining and cron-based anomaly detection. Adds unnecessary moving parts and deployment risks for a constrained demo environment.
 **Consequence:** The "hash" column on transactions remains null until the trust demo script is manually triggered, proving the capability without the overhead.
+
+## ADR-023 — Skip Phase 8 (War room) to prioritize Phase 9 (Ship)
+**Date:** 2026-08-27 | **Session:** session-2026-08-27-a | **Status:** superseded by ADR-024
+**Context:** Phase 8 (War Room) is listed as droppable. To ensure a stable and ship-ready final product within time constraints, a choice must be made between building Phase 8 or proceeding to ship.
+**Decision:** Skip Phase 8 entirely and proceed to Phase 9 (Ship), finalizing the repository for submission.
+**Rejected:** Attempting a rushed implementation of Phase 8, which could break the existing stable Phase 1-7 demo flow.
+**Consequence:** The final product will not include the outbreak counterfactual simulation or national choropleth.
+
+## ADR-024 — Reverse ADR-023 and implement Phase 8
+**Date:** 2026-08-27 | **Session:** session-2026-08-27-a | **Status:** superseded by ADR-025
+**Context:** The user explicitly requested to proceed with Phase 8 despite the initial decision to skip it for time constraints.
+**Decision:** Build the Phase 8 War Room feature using a simplified deterministic vectorised simulation instead of a complex Monte Carlo to ensure it fits within performance constraints.
+**Rejected:** Leaving the product without the "preparedness" module.
+**Consequence:** Adds `WarRoom.tsx` to the dashboard, providing fragility rankings and counterfactual impact metrics.
+
+## ADR-025 — Merge War Room (Macro) and Dashboard (Micro)
+**Date:** 2026-08-27 | **Session:** session-2026-08-27-a | **Status:** accepted
+**Context:** Having a separate War Room tab created a disconnect between predicting a macro-level emergency and drilling down into micro-level facility management.
+**Decision:** Merge the War Room simulation directly into the main Dashboard's Scenario Runner via a "Predict (Macro)" vs "Inject (Micro)" toggle. The Macro mode runs the twin simulation without modifying the database, lighting up the unified map and Risk Queue.
+**Rejected:** Keeping them in separate tabs.
+**Consequence:** `WarRoom.tsx` is deleted, simplifying navigation. The Dashboard now seamlessly supports both predicting counterfactuals (War Room) and injecting them into the live database (Phase 2).

@@ -58,7 +58,7 @@ Open http://localhost:5173
 
 Gemini (register extraction) · Cloud Run · Firebase Hosting ·
 FastAPI · Postgres · React + Vite · MapLibre · OR-Tools ·
-statsforecast · Flower
+Custom NumPy Forecasting · Flower
 
 ## Problem statement coverage
 
